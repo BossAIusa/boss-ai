@@ -39,7 +39,7 @@ export default function LoginPage() {
     setError('')
 
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: 'https://bossaiusa.com/auth/callback?next=/reset-password',
+      redirectTo: 'https://bossaiusa.com/reset-password',
     })
 
     if (error) {
