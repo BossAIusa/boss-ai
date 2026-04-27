@@ -130,16 +130,7 @@ export default function LoginPage() {
             required
           />
           <div className="flex flex-col gap-1.5">
-            <div className="flex items-center justify-between">
-              <label className="text-sm font-medium text-[#e8e8f0]">Password</label>
-              <button
-                type="button"
-                onClick={() => { setForgotMode(true); setError('') }}
-                className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
-              >
-                Forgot password?
-              </button>
-            </div>
+            <label className="text-sm font-medium text-[#e8e8f0]">Password</label>
             <input
               type="password"
               placeholder="••••••••"
@@ -148,6 +139,13 @@ export default function LoginPage() {
               required
               className="w-full px-3 py-2 text-sm rounded-lg border outline-none transition-all bg-[#1a1a24] border-[#2a2a3a] text-[#e8e8f0] placeholder-[#888899] focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30"
             />
+            <button
+              type="button"
+              onClick={() => { setForgotMode(true); setError('') }}
+              className="self-end text-xs text-indigo-400 hover:text-indigo-300 transition-colors mt-1"
+            >
+              Forgot password?
+            </button>
           </div>
           {error && (
             <div className="px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
