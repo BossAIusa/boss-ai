@@ -151,6 +151,48 @@ CREATE TABLE IF NOT EXISTS coverage_requests (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Store settings (singleton row)
+CREATE TABLE IF NOT EXISTS store_settings (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  store_name TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Store hours per day of week
+CREATE TABLE IF NOT EXISTS store_hours (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  day_of_week INTEGER NOT NULL CHECK (day_of_week BETWEEN 0 AND 6),
+  is_open BOOLEAN DEFAULT TRUE,
+  open_time TIME NOT NULL DEFAULT '09:00',
+  close_time TIME NOT NULL DEFAULT '17:00',
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(day_of_week)
+);
+
+-- AI assistant conversation memory
+CREATE TABLE IF NOT EXISTS ai_conversations (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  user_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+  content TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS ai_conversations_user_idx ON ai_conversations(user_id, created_at DESC);
+
+-- Persistent manager preferences learned by AI assistant
+CREATE TABLE IF NOT EXISTS ai_memories (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  user_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
+  kind TEXT NOT NULL,
+  content TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS ai_memories_user_idx ON ai_memories(user_id);
+
 -- RLS Policies
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE roles ENABLE ROW LEVEL SECURITY;
@@ -163,6 +205,47 @@ ALTER TABLE time_off_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE availability_change_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE coverage_requests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE store_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE store_hours ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ai_conversations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ai_memories ENABLE ROW LEVEL SECURITY;
+
+-- Store settings policies
+CREATE POLICY "Anyone can view store settings" ON store_settings FOR SELECT USING (true);
+CREATE POLICY "Managers can manage store settings" ON store_settings FOR ALL USING (
+  EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'manager')
+);
+
+-- Store hours policies
+CREATE POLICY "Anyone can view store hours" ON store_hours FOR SELECT USING (true);
+CREATE POLICY "Managers can manage store hours" ON store_hours FOR ALL USING (
+  EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'manager')
+);
+
+-- AI conversation policies (only owner)
+CREATE POLICY "Users can view own AI conversations" ON ai_conversations FOR SELECT USING (user_id = auth.uid());
+CREATE POLICY "Users can insert own AI conversations" ON ai_conversations FOR INSERT WITH CHECK (user_id = auth.uid());
+CREATE POLICY "Users can delete own AI conversations" ON ai_conversations FOR DELETE USING (user_id = auth.uid());
+
+-- AI memory policies (only owner)
+CREATE POLICY "Users can view own AI memories" ON ai_memories FOR SELECT USING (user_id = auth.uid());
+CREATE POLICY "Users can insert own AI memories" ON ai_memories FOR INSERT WITH CHECK (user_id = auth.uid());
+CREATE POLICY "Users can update own AI memories" ON ai_memories FOR UPDATE USING (user_id = auth.uid());
+CREATE POLICY "Users can delete own AI memories" ON ai_memories FOR DELETE USING (user_id = auth.uid());
+
+-- Seed defaults: one store_settings row + 7 store_hours rows
+INSERT INTO store_settings (store_name) VALUES ('')
+ON CONFLICT DO NOTHING;
+
+INSERT INTO store_hours (day_of_week, is_open, open_time, close_time) VALUES
+  (0, TRUE, '10:00', '17:00'),
+  (1, TRUE, '09:00', '18:00'),
+  (2, TRUE, '09:00', '18:00'),
+  (3, TRUE, '09:00', '18:00'),
+  (4, TRUE, '09:00', '18:00'),
+  (5, TRUE, '09:00', '20:00'),
+  (6, TRUE, '10:00', '18:00')
+ON CONFLICT (day_of_week) DO NOTHING;
 
 -- Profiles policies
 CREATE POLICY "Users can view all profiles" ON profiles FOR SELECT USING (true);

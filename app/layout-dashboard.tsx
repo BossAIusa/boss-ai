@@ -17,9 +17,15 @@ export default async function DashboardShell({ children }: { children: ReactNode
 
   if (!profile) redirect('/login')
 
+  const { data: storeSettings } = await supabase
+    .from('store_settings')
+    .select('store_name')
+    .limit(1)
+    .maybeSingle()
+
   return (
     <div className="flex h-screen bg-[#0a0a0f]">
-      <Sidebar profile={profile} />
+      <Sidebar profile={profile} storeName={storeSettings?.store_name || ''} />
       <main className="flex-1 ml-60 overflow-y-auto">
         {children}
       </main>

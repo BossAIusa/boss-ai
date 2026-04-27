@@ -18,9 +18,14 @@ export default async function TeamPage() {
 
   const { data: roles } = await supabase.from('roles').select('*').order('name')
 
+  const { data: availability } = await supabase
+    .from('availability')
+    .select('*')
+    .order('day_of_week')
+
   return (
     <DashboardShell>
-      <TeamView employees={employees || []} roles={roles || []} />
+      <TeamView employees={employees || []} roles={roles || []} availability={availability || []} />
     </DashboardShell>
   )
 }

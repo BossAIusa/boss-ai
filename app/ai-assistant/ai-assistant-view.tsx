@@ -1,256 +1,119 @@
 'use client'
 import { useState, useRef, useEffect } from 'react'
-import { Employee, Shift, Availability } from '@/types'
+import { useChat } from '@ai-sdk/react'
+import { DefaultChatTransport, type UIMessage } from 'ai'
+import {
+  Employee, AIConversationMessage, AIMemory,
+} from '@/types'
+import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
-import { DAY_NAMES, formatTime, getInitials, stringToColor } from '@/lib/utils'
-import { Bot, Send, User } from 'lucide-react'
+import { Bot, Send, User, Brain, Trash2 } from 'lucide-react'
 import { format } from 'date-fns'
 
 interface AIAssistantViewProps {
+  userId: string
   employees: Employee[]
-  shifts: Shift[]
-  availability: Availability[]
+  history: AIConversationMessage[]
+  memories: AIMemory[]
 }
 
-interface Message {
-  id: string
-  role: 'user' | 'assistant'
-  content: string
-  timestamp: Date
+function historyToUIMessages(history: AIConversationMessage[]): UIMessage[] {
+  return history.map(h => ({
+    id: h.id,
+    role: h.role,
+    parts: [{ type: 'text', text: h.content }],
+  }))
 }
 
-function analyzeCallOut(
-  message: string,
-  employees: Employee[],
-  shifts: Shift[],
-  availability: Availability[]
-): string {
-  const today = new Date()
-  const todayStr = format(today, 'EEEE, MMMM d, yyyy')
-  const lowMsg = message.toLowerCase()
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
 
-  // Parse day references
-  const dayRefs: Record<string, number> = {
-    today: today.getDay(),
-    tomorrow: (today.getDay() + 1) % 7,
-    sunday: 0, monday: 1, tuesday: 2, wednesday: 3,
-    thursday: 4, friday: 5, saturday: 6,
-  }
+function applyInline(s: string): string {
+  let out = escapeHtml(s)
+  out = out.replace(/\*\*([^*]+)\*\*/g, '<strong class="text-[#e8e8f0] font-semibold">$1</strong>')
+  out = out.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<em>$1</em>')
+  out = out.replace(/`([^`]+)`/g, '<span class="px-1 py-0.5 rounded bg-[#1a1a24] text-indigo-300 text-[11px]">$1</span>')
+  return out
+}
 
-  let targetDay = today.getDay()
-  for (const [ref, day] of Object.entries(dayRefs)) {
-    if (lowMsg.includes(ref)) {
-      targetDay = day
-      break
+function formatText(content: string): string {
+  const lines = content.replace(/\r\n/g, '\n').split('\n')
+  const out: string[] = []
+
+  for (let raw of lines) {
+    // Drop horizontal rules entirely
+    if (/^\s*-{3,}\s*$/.test(raw) || /^\s*_{3,}\s*$/.test(raw) || /^\s*\*{3,}\s*$/.test(raw)) continue
+
+    // Strip leading markdown heading markers (##, ###, etc.) — show as regular text
+    raw = raw.replace(/^\s{0,3}#{1,6}\s+/, '')
+
+    const trimmed = raw.trim()
+    if (trimmed === '') {
+      out.push('<div class="h-2"></div>')
+      continue
     }
-  }
 
-  // Parse employee name references
-  const mentionedEmployees = employees.filter(emp => {
-    const name = emp.profile?.full_name?.toLowerCase() || ''
-    const parts = name.split(' ')
-    return parts.some(part => lowMsg.includes(part.toLowerCase()))
-  })
-
-  // Find who's scheduled for the target day
-  const targetDate = new Date(today)
-  while (targetDate.getDay() !== targetDay) {
-    targetDate.setDate(targetDate.getDate() + 1)
-  }
-  const targetDateStr = format(targetDate, 'yyyy-MM-dd')
-
-  const scheduledShifts = shifts.filter(s => s.date === targetDateStr)
-  const scheduledEmpIds = new Set(scheduledShifts.map(s => s.employee_id))
-
-  // Find available replacements
-  const availableReplacements = employees
-    .filter(emp => {
-      // Not already scheduled
-      if (scheduledEmpIds.has(emp.id)) return false
-
-      // Check availability for target day
-      const empAvailability = availability.filter(a =>
-        a.employee_id === emp.id &&
-        a.day_of_week === targetDay &&
-        a.is_available
+    // Bullet list item: "- ", "* ", "• "
+    const bulletMatch = raw.match(/^\s*[-*•]\s+(.*)$/)
+    if (bulletMatch) {
+      out.push(
+        `<div class="flex gap-2 my-1"><span class="text-indigo-400 mt-0.5 flex-shrink-0">•</span><span class="flex-1">${applyInline(bulletMatch[1])}</span></div>`
       )
-      return empAvailability.length > 0
-    })
-    .map(emp => {
-      // Score based on scheduled hours this week
-      const weeklyShifts = shifts.filter(s => s.employee_id === emp.id)
-      const weeklyHours = weeklyShifts.reduce((acc, s) => {
-        const start = s.start_time.split(':').map(Number)
-        const end = s.end_time.split(':').map(Number)
-        return acc + (end[0] * 60 + end[1] - start[0] * 60 - start[1]) / 60
-      }, 0)
+      continue
+    }
 
-      const maxHours = emp.max_hours_per_week || 40
-      const utilizationScore = 1 - (weeklyHours / maxHours) // Higher = more available
-      const dayAvailability = availability.find(a =>
-        a.employee_id === emp.id && a.day_of_week === targetDay && a.is_available
+    // Numbered list item: "1. ", "1) "
+    const numberedMatch = raw.match(/^\s*(\d+)[.)]\s+(.*)$/)
+    if (numberedMatch) {
+      out.push(
+        `<div class="flex gap-2 my-1"><span class="text-indigo-400 mt-0.5 flex-shrink-0 font-medium">${numberedMatch[1]}.</span><span class="flex-1">${applyInline(numberedMatch[2])}</span></div>`
       )
-
-      return {
-        emp,
-        score: utilizationScore,
-        weeklyHours,
-        maxHours,
-        dayAvailability,
-      }
-    })
-    .sort((a, b) => b.score - a.score)
-
-  // Check for workload analysis intent
-  if (lowMsg.includes('workload') || lowMsg.includes('hours') || lowMsg.includes('trend')) {
-    const analysis = employees.map(emp => {
-      const empShifts = shifts.filter(s => s.employee_id === emp.id)
-      const hours = empShifts.reduce((acc, s) => {
-        const start = s.start_time.split(':').map(Number)
-        const end = s.end_time.split(':').map(Number)
-        return acc + (end[0] * 60 + end[1] - start[0] * 60 - start[1]) / 60
-      }, 0)
-      return { name: emp.profile?.full_name || 'Unknown', hours, shifts: empShifts.length }
-    }).sort((a, b) => b.hours - a.hours)
-
-    let response = `**Workload Analysis** (past 7 days)\n\nToday is ${todayStr}.\n\n`
-    analysis.forEach(({ name, hours, shifts }) => {
-      const bar = '█'.repeat(Math.min(Math.round(hours / 2), 20))
-      response += `**${name}**: ${hours.toFixed(1)} hrs, ${shifts} shifts  ${bar}\n`
-    })
-
-    const avgHours = analysis.reduce((a, b) => a + b.hours, 0) / (analysis.length || 1)
-    response += `\n**Average**: ${avgHours.toFixed(1)} hrs/employee`
-
-    const overloaded = analysis.filter(e => e.hours > 35)
-    if (overloaded.length > 0) {
-      response += `\n\n⚠️ **Heads up**: ${overloaded.map(e => e.name).join(', ')} ${overloaded.length === 1 ? 'is' : 'are'} approaching maximum hours.`
-    }
-    return response
-  }
-
-  // Call-out / replacement scenario
-  if (mentionedEmployees.length > 0 || lowMsg.includes('call') || lowMsg.includes('sick') || lowMsg.includes('out') || lowMsg.includes('cover') || lowMsg.includes('replac')) {
-    const callingOut = mentionedEmployees[0]
-    const dayName = DAY_NAMES[targetDay]
-    let response = `**Call-Out Coverage — ${dayName}** (${format(targetDate, 'MMM d')})\n\n`
-    response += `Today is ${todayStr}.\n\n`
-
-    if (callingOut) {
-      const callerShift = scheduledShifts.find(s => s.employee_id === callingOut.id)
-      response += `📋 **${callingOut.profile?.full_name}** is calling out`
-      if (callerShift) {
-        response += ` for their ${formatTime(callerShift.start_time)} – ${formatTime(callerShift.end_time)} shift`
-      }
-      response += `.\n\n`
+      continue
     }
 
-    if (availableReplacements.length === 0) {
-      response += `❌ No available replacements found for ${dayName}. All other employees are either scheduled or unavailable.\n\nConsider:\n• Checking if any scheduled employee can extend their shift\n• Offering overtime to available staff\n• Splitting the shift between multiple employees`
-    } else {
-      response += `**Recommended Replacements** (ranked by availability):\n\n`
-      availableReplacements.slice(0, 4).forEach((r, i) => {
-        const dayAvail = r.dayAvailability
-        const hoursLeft = r.maxHours - r.weeklyHours
-        const rankEmoji = ['🥇', '🥈', '🥉', '4️⃣'][i]
-        response += `${rankEmoji} **${r.emp.profile?.full_name}**\n`
-        if (dayAvail) {
-          response += `   Available: ${formatTime(dayAvail.start_time)} – ${formatTime(dayAvail.end_time)}\n`
-        }
-        response += `   This week: ${r.weeklyHours.toFixed(1)} hrs / ${r.maxHours} max (~${hoursLeft.toFixed(0)} hrs remaining)\n\n`
-      })
-    }
-
-    return response
+    out.push(`<div class="my-0.5">${applyInline(raw)}</div>`)
   }
 
-  // General help / greeting
-  if (lowMsg.includes('hello') || lowMsg.includes('hi') || lowMsg.includes('help') || lowMsg.match(/^(hey|yo|sup)\b/)) {
-    return `Hello! I'm your Boss.AI scheduling assistant. Today is **${todayStr}**.\n\nI can help you with:\n\n• **Call-out coverage** — "Sarah is calling out tomorrow, who can cover?"\n• **Workload analysis** — "Show me workload trends this week"\n• **Replacement scoring** — I'll rank candidates by availability, hours, and role\n• **Schedule insights** — Ask about any employee or day\n\nWhat do you need?`
-  }
-
-  // Who's scheduled query
-  if (lowMsg.includes('who') && (lowMsg.includes('schedule') || lowMsg.includes('working') || lowMsg.includes('shift'))) {
-    const dayName = DAY_NAMES[targetDay]
-    if (scheduledShifts.length === 0) {
-      return `No shifts are scheduled for **${dayName}** (${format(targetDate, 'MMM d')}).`
-    }
-    let response = `**Scheduled for ${dayName}** (${format(targetDate, 'MMM d')}):\n\n`
-    scheduledShifts.forEach(s => {
-      const name = s.employee?.profile?.full_name || 'Unknown'
-      response += `• **${name}** — ${formatTime(s.start_time)} to ${formatTime(s.end_time)}`
-      if (s.role) response += ` (${s.role.name})`
-      response += '\n'
-    })
-    return response
-  }
-
-  return `I understood you're asking about scheduling. Today is **${todayStr}**.\n\nTry asking me:\n• "Who's working Monday?"\n• "John called out today, who can cover?"\n• "Show me workload trends"\n• "Who's available Thursday?"`
+  return out.join('')
 }
 
-export function AIAssistantView({ employees, shifts, availability }: AIAssistantViewProps) {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: '1',
-      role: 'assistant',
-      content: `Hello! I'm your Boss.AI scheduling assistant. Today is **${format(new Date(), 'EEEE, MMMM d, yyyy')}**.\n\nI can help with call-out coverage, replacement recommendations, workload analysis, and scheduling questions. What do you need?`,
-      timestamp: new Date(),
-    }
-  ])
+export function AIAssistantView({ userId, employees, history, memories }: AIAssistantViewProps) {
+  const supabase = createClient()
   const [input, setInput] = useState('')
-  const [thinking, setThinking] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
+
+  const { messages, sendMessage, setMessages, status, stop, error } = useChat({
+    transport: new DefaultChatTransport({ api: '/api/chat' }),
+    messages: historyToUIMessages(history),
+  })
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  const send = async () => {
-    if (!input.trim() || thinking) return
-
-    const userMsg: Message = {
-      id: Date.now().toString(),
-      role: 'user',
-      content: input.trim(),
-      timestamp: new Date(),
-    }
-    setMessages(prev => [...prev, userMsg])
+  const send = (e?: React.FormEvent) => {
+    e?.preventDefault()
+    if (!input.trim() || status !== 'ready') return
+    sendMessage({ text: input.trim() })
     setInput('')
-    setThinking(true)
-
-    // Simulate thinking delay
-    await new Promise(r => setTimeout(r, 600))
-
-    const response = analyzeCallOut(userMsg.content, employees, shifts, availability)
-    const assistantMsg: Message = {
-      id: (Date.now() + 1).toString(),
-      role: 'assistant',
-      content: response,
-      timestamp: new Date(),
-    }
-    setMessages(prev => [...prev, assistantMsg])
-    setThinking(false)
   }
 
-  const formatContent = (content: string) => {
-    return content
-      .split('\n')
-      .map((line, i) => {
-        line = line.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-        if (line.startsWith('• ')) {
-          return `<div key="${i}" class="flex gap-2 my-0.5"><span class="text-indigo-400 mt-0.5">•</span><span>${line.slice(2)}</span></div>`
-        }
-        if (line.startsWith('🥇') || line.startsWith('🥈') || line.startsWith('🥉') || line.startsWith('4️⃣')) {
-          return `<div key="${i}" class="mt-2">${line}</div>`
-        }
-        if (line.startsWith('   ')) {
-          return `<div key="${i}" class="ml-6 text-[#888899] text-xs">${line.trim()}</div>`
-        }
-        if (line === '') return `<div key="${i}" class="h-1"></div>`
-        return `<div key="${i}">${line}</div>`
-      })
-      .join('')
+  const clearHistory = async () => {
+    if (!confirm('Clear the conversation (keeps saved notes)?')) return
+    await supabase.from('ai_conversations').delete().eq('user_id', userId)
+    setMessages([])
   }
+
+  const suggestions = history.length === 0 && messages.length === 0 ? [
+    `Who can cover tomorrow?`,
+    `What's the workload this week?`,
+    employees[0] ? `Schedule ${employees[0].profile?.full_name?.split(' ')[0]} Monday 10-6` : null,
+    `Who has approved time off?`,
+  ].filter(Boolean) as string[] : []
 
   return (
     <div className="flex flex-col h-screen bg-[#0a0a0f]">
@@ -259,14 +122,49 @@ export function AIAssistantView({ employees, shifts, availability }: AIAssistant
         <div className="w-8 h-8 rounded-lg bg-indigo-500/20 flex items-center justify-center">
           <Bot size={16} className="text-indigo-400" />
         </div>
-        <div>
-          <h1 className="text-base font-semibold text-[#e8e8f0]">AI Call-Out Assistant</h1>
-          <p className="text-xs text-[#888899]">Smart coverage recommendations & workload analysis</p>
+        <div className="flex-1">
+          <h1 className="text-base font-semibold text-[#e8e8f0]">AI Assistant</h1>
+          <p className="text-xs text-[#888899]">Schedule access · persistent memory</p>
         </div>
+        <div className="flex items-center gap-2 text-xs text-[#888899]">
+          <Brain size={13} /> {memories.length} notes
+        </div>
+        <button
+          onClick={clearHistory}
+          title="Clear conversation"
+          className="p-1.5 rounded-md hover:bg-[#1a1a24] text-[#888899] hover:text-[#e8e8f0] transition-colors"
+        >
+          <Trash2 size={13} />
+        </button>
       </div>
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-6 py-6 space-y-4">
+        {messages.length === 0 && (
+          <div className="max-w-lg mx-auto text-center py-12">
+            <div className="w-12 h-12 rounded-2xl bg-indigo-500/20 flex items-center justify-center mx-auto mb-4">
+              <Bot size={22} className="text-indigo-400" />
+            </div>
+            <h2 className="text-lg font-semibold text-[#e8e8f0] mb-1">How can I help?</h2>
+            <p className="text-sm text-[#888899] mb-6">
+              I know your team, schedule, availability, time off, and store hours. I can also edit the schedule directly.
+            </p>
+            {suggestions.length > 0 && (
+              <div className="flex flex-wrap gap-2 justify-center">
+                {suggestions.map(s => (
+                  <button
+                    key={s}
+                    onClick={() => sendMessage({ text: s })}
+                    className="px-3 py-1.5 text-xs rounded-full border border-[#2a2a3a] bg-[#111118] text-[#e8e8f0] hover:border-indigo-500/40 hover:bg-indigo-500/5 transition-colors"
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {messages.map(msg => (
           <div key={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
             <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 ${
@@ -277,57 +175,79 @@ export function AIAssistantView({ employees, shifts, availability }: AIAssistant
                 : <User size={13} className="text-[#888899]" />
               }
             </div>
-            <div className={`max-w-lg rounded-xl px-4 py-3 text-sm leading-relaxed ${
+            <div className={`max-w-xl rounded-xl text-sm leading-relaxed ${
               msg.role === 'assistant'
                 ? 'bg-[#111118] border border-[#2a2a3a] text-[#e8e8f0]'
                 : 'bg-indigo-500/10 border border-indigo-500/20 text-[#e8e8f0]'
-            }`}>
-              <div
-                dangerouslySetInnerHTML={{ __html: formatContent(msg.content) }}
-                className="space-y-0.5"
-              />
-              <div className="text-[10px] text-[#888899]/50 mt-2">
-                {format(msg.timestamp, 'h:mm a')}
-              </div>
+            } px-4 py-3 space-y-1`}>
+              {msg.parts.map((part, idx) => {
+                if (part.type === 'text') {
+                  return (
+                    <div
+                      key={idx}
+                      dangerouslySetInnerHTML={{ __html: formatText(part.text) }}
+                    />
+                  )
+                }
+                // Tool calls are intentionally hidden from the UI
+                return null
+              })}
             </div>
           </div>
         ))}
 
-        {thinking && (
-          <div className="flex gap-3">
-            <div className="w-7 h-7 rounded-lg bg-indigo-500/20 flex items-center justify-center">
-              <Bot size={13} className="text-indigo-400" />
-            </div>
-            <div className="bg-[#111118] border border-[#2a2a3a] rounded-xl px-4 py-3">
-              <div className="flex gap-1">
-                <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+        {(() => {
+          if (status !== 'submitted' && status !== 'streaming') return null
+          const last = messages[messages.length - 1]
+          const lastHasText = last?.role === 'assistant' && last.parts.some(p => p.type === 'text' && 'text' in p && p.text.length > 0)
+          if (lastHasText) return null
+          return (
+            <div className="flex gap-3">
+              <div className="w-7 h-7 rounded-lg bg-indigo-500/20 flex items-center justify-center">
+                <Bot size={13} className="text-indigo-400" />
+              </div>
+              <div className="bg-[#111118] border border-[#2a2a3a] rounded-xl px-4 py-3">
+                <div className="flex gap-1">
+                  <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                  <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                  <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                </div>
               </div>
             </div>
+          )
+        })()}
+
+        {error && (
+          <div className="mx-auto max-w-lg px-4 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs font-mono whitespace-pre-wrap break-all">
+            {error.message || String(error)}
           </div>
         )}
+
         <div ref={bottomRef} />
       </div>
 
       {/* Input */}
-      <div className="px-6 py-4 border-t border-[#2a2a3a] bg-[#111118]">
+      <form onSubmit={send} className="px-6 py-4 border-t border-[#2a2a3a] bg-[#111118]">
         <div className="flex gap-3">
           <input
             value={input}
             onChange={e => setInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && !e.shiftKey && send()}
-            placeholder="e.g. 'Sarah called out today, who can cover?' or 'Show workload trends'"
-            className="flex-1 px-4 py-2.5 text-sm rounded-xl border border-[#2a2a3a] bg-[#1a1a24] text-[#e8e8f0] placeholder-[#888899] outline-none focus:border-indigo-500/50 transition-colors"
+            placeholder="Ask anything about the schedule, or give me changes to make…"
+            disabled={status !== 'ready'}
+            className="flex-1 px-4 py-2.5 text-sm rounded-xl border border-[#2a2a3a] bg-[#1a1a24] text-[#e8e8f0] placeholder-[#888899] outline-none focus:border-indigo-500/50 transition-colors disabled:opacity-60"
           />
-          <Button onClick={send} disabled={!input.trim() || thinking}>
-            <Send size={14} />
-          </Button>
+          {status === 'streaming' || status === 'submitted' ? (
+            <Button type="button" variant="secondary" onClick={() => stop()}>Stop</Button>
+          ) : (
+            <Button type="submit" disabled={!input.trim() || status !== 'ready'}>
+              <Send size={14} />
+            </Button>
+          )}
         </div>
         <p className="text-[10px] text-[#888899]/50 mt-2 text-center">
-          Press Enter to send · Ask about coverage, availability, workload, or who's scheduled
+          Today is {format(new Date(), 'EEEE, MMMM d')}
         </p>
-      </div>
+      </form>
     </div>
   )
 }

@@ -38,12 +38,15 @@ export default function LoginPage() {
     setResetLoading(true)
     setError('')
 
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: 'https://bossaiusa.com/reset-password',
+    const res = await fetch('/api/auth/reset-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
     })
 
-    if (error) {
-      setError(error.message)
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      setError(body.error || 'Could not send reset email')
     } else {
       setResetSent(true)
     }

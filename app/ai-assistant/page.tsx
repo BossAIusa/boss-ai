@@ -11,26 +11,23 @@ export default async function AIAssistantPage() {
   const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single()
   if (!profile || profile.role !== 'manager') redirect('/portal')
 
-  const { data: employees } = await supabase
-    .from('employees')
-    .select('*, profile:profiles(*), role:roles(*)')
-    .order('created_at')
-
-  const { data: shifts } = await supabase
-    .from('shifts')
-    .select('*, employee:employees(*, profile:profiles(*)), role:roles(*)')
-    .gte('date', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0])
-
-  const { data: availability } = await supabase
-    .from('availability')
-    .select('*')
+  const [
+    { data: employees },
+    { data: history },
+    { data: memories },
+  ] = await Promise.all([
+    supabase.from('employees').select('*, profile:profiles(*), role:roles(*)').order('created_at'),
+    supabase.from('ai_conversations').select('*').eq('user_id', user.id).order('created_at', { ascending: true }).limit(200),
+    supabase.from('ai_memories').select('*').eq('user_id', user.id).order('updated_at', { ascending: false }),
+  ])
 
   return (
     <DashboardShell>
       <AIAssistantView
+        userId={user.id}
         employees={employees || []}
-        shifts={shifts || []}
-        availability={availability || []}
+        history={history || []}
+        memories={memories || []}
       />
     </DashboardShell>
   )

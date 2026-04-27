@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
   } else if (token_hash && type) {
     const { error } = await supabase.auth.verifyOtp({
       token_hash,
-      type: type as 'recovery' | 'email' | 'signup' | 'invite' | 'magiclink' | 'sms',
+      type: type as 'recovery' | 'email' | 'signup' | 'invite' | 'magiclink',
     })
     if (!error) {
       return NextResponse.redirect(`${origin}${next}`)

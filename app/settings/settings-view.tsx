@@ -1,11 +1,13 @@
 'use client'
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { Role } from '@/types'
+import { Role, StoreSettings, StoreHours } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Modal } from '@/components/ui/modal'
-import { Plus, Pencil, Trash2, Briefcase } from 'lucide-react'
+import { TimePicker } from '@/components/ui/time-picker'
+import { DAY_NAMES_SHORT } from '@/lib/utils'
+import { Plus, Pencil, Trash2, Briefcase, Store, Clock } from 'lucide-react'
 
 const PRESET_COLORS = [
   '#6366f1', '#8b5cf6', '#ec4899', '#f43f5e',
@@ -15,15 +17,45 @@ const PRESET_COLORS = [
 
 interface SettingsViewProps {
   roles: Role[]
+  storeSettings: StoreSettings | null
+  storeHours: StoreHours[]
 }
 
-export function SettingsView({ roles: initialRoles }: SettingsViewProps) {
+type HoursDraft = {
+  day_of_week: number
+  is_open: boolean
+  open_time: string
+  close_time: string
+  id?: string
+}
+
+export function SettingsView({ roles: initialRoles, storeSettings, storeHours: initialHours }: SettingsViewProps) {
   const [roles, setRoles] = useState(initialRoles)
   const [modal, setModal] = useState(false)
   const [editing, setEditing] = useState<Role | null>(null)
   const [name, setName] = useState('')
   const [color, setColor] = useState(PRESET_COLORS[0])
   const [saving, setSaving] = useState(false)
+
+  const [storeName, setStoreName] = useState(storeSettings?.store_name || '')
+  const [storeSaved, setStoreSaved] = useState(false)
+  const [savingStore, setSavingStore] = useState(false)
+
+  const [hours, setHours] = useState<HoursDraft[]>(() =>
+    Array.from({ length: 7 }, (_, i) => {
+      const existing = initialHours.find(h => h.day_of_week === i)
+      return {
+        day_of_week: i,
+        is_open: existing?.is_open ?? true,
+        open_time: existing?.open_time?.slice(0, 5) || '09:00',
+        close_time: existing?.close_time?.slice(0, 5) || '17:00',
+        id: existing?.id,
+      }
+    })
+  )
+  const [hoursSaved, setHoursSaved] = useState(false)
+  const [savingHours, setSavingHours] = useState(false)
+
   const supabase = createClient()
 
   const openAdd = () => {
@@ -59,11 +91,125 @@ export function SettingsView({ roles: initialRoles }: SettingsViewProps) {
     setRoles(prev => prev.filter(r => r.id !== role.id))
   }
 
+  const saveStore = async () => {
+    setSavingStore(true)
+    setStoreSaved(false)
+    if (storeSettings) {
+      await supabase.from('store_settings').update({ store_name: storeName, updated_at: new Date().toISOString() }).eq('id', storeSettings.id)
+    } else {
+      await supabase.from('store_settings').insert({ store_name: storeName })
+    }
+    setSavingStore(false)
+    setStoreSaved(true)
+    setTimeout(() => setStoreSaved(false), 1800)
+  }
+
+  const saveHours = async () => {
+    setSavingHours(true)
+    setHoursSaved(false)
+    for (const h of hours) {
+      if (h.id) {
+        await supabase.from('store_hours').update({
+          is_open: h.is_open,
+          open_time: h.open_time,
+          close_time: h.close_time,
+          updated_at: new Date().toISOString(),
+        }).eq('id', h.id)
+      } else {
+        const { data } = await supabase.from('store_hours').insert({
+          day_of_week: h.day_of_week,
+          is_open: h.is_open,
+          open_time: h.open_time,
+          close_time: h.close_time,
+        }).select().single()
+        if (data) h.id = data.id
+      }
+    }
+    setSavingHours(false)
+    setHoursSaved(true)
+    setTimeout(() => setHoursSaved(false), 1800)
+  }
+
+  const updateHours = (idx: number, patch: Partial<HoursDraft>) => {
+    setHours(prev => prev.map((h, i) => i === idx ? { ...h, ...patch } : h))
+  }
+
   return (
     <div className="p-6 max-w-2xl">
       <div className="mb-8">
         <h1 className="text-xl font-bold text-[#e8e8f0]">Settings</h1>
         <p className="text-sm text-[#888899] mt-0.5">Manage your workspace configuration</p>
+      </div>
+
+      {/* Store Info */}
+      <div className="bg-[#111118] border border-[#2a2a3a] rounded-xl mb-6">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[#2a2a3a]">
+          <div className="flex items-center gap-2">
+            <Store size={15} className="text-[#888899]" />
+            <span className="font-semibold text-[#e8e8f0] text-sm">Store</span>
+          </div>
+          {storeSaved && <span className="text-xs text-green-400">Saved ✓</span>}
+        </div>
+        <div className="p-5 space-y-3">
+          <Input
+            label="Store Name"
+            placeholder="e.g. Main Street Coffee"
+            value={storeName}
+            onChange={e => setStoreName(e.target.value)}
+          />
+          <div className="flex justify-end">
+            <Button size="sm" onClick={saveStore} loading={savingStore}>Save</Button>
+          </div>
+        </div>
+      </div>
+
+      {/* Hours of Operation */}
+      <div className="bg-[#111118] border border-[#2a2a3a] rounded-xl mb-6">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[#2a2a3a]">
+          <div className="flex items-center gap-2">
+            <Clock size={15} className="text-[#888899]" />
+            <span className="font-semibold text-[#e8e8f0] text-sm">Hours of Operation</span>
+          </div>
+          {hoursSaved && <span className="text-xs text-green-400">Saved ✓</span>}
+        </div>
+        <div className="p-5 space-y-2.5">
+          {hours.map((h, idx) => (
+            <div key={h.day_of_week} className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => updateHours(idx, { is_open: !h.is_open })}
+                className={`w-12 h-6 rounded-full relative transition-colors flex-shrink-0 ${
+                  h.is_open ? 'bg-green-500' : 'bg-[#2a2a3a]'
+                }`}
+              >
+                <div className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${
+                  h.is_open ? 'translate-x-7' : 'translate-x-1'
+                }`} />
+              </button>
+              <span className="w-10 text-xs text-[#888899] font-medium flex-shrink-0">
+                {DAY_NAMES_SHORT[h.day_of_week]}
+              </span>
+              {h.is_open ? (
+                <div className="flex items-center gap-2 flex-1 min-w-0">
+                  <TimePicker
+                    value={h.open_time}
+                    onChange={v => updateHours(idx, { open_time: v })}
+                  />
+                  <span className="text-xs text-[#888899]">to</span>
+                  <TimePicker
+                    value={h.close_time}
+                    onChange={v => updateHours(idx, { close_time: v })}
+                  />
+                </div>
+              ) : (
+                <span className="text-xs text-[#888899]/50">Closed</span>
+              )}
+            </div>
+          ))}
+          <div className="flex justify-end pt-2">
+            <Button size="sm" onClick={saveHours} loading={savingHours}>Save</Button>
+          </div>
+        </div>
       </div>
 
       {/* Roles Section */}

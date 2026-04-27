@@ -10,6 +10,7 @@ import { Profile } from '@/types'
 
 interface SidebarProps {
   profile: Profile
+  storeName?: string
 }
 
 const managerNav = [
@@ -24,7 +25,7 @@ const employeeNav = [
   { href: '/portal', label: 'My Portal', icon: LayoutDashboard },
 ]
 
-export function Sidebar({ profile }: SidebarProps) {
+export function Sidebar({ profile, storeName }: SidebarProps) {
   const pathname = usePathname()
   const router = useRouter()
   const supabase = createClient()
@@ -43,7 +44,12 @@ export function Sidebar({ profile }: SidebarProps) {
           <div className="w-8 h-8 rounded-lg bg-indigo-500 flex items-center justify-center">
             <Bot size={16} className="text-white" />
           </div>
-          <span className="text-base font-bold text-[#e8e8f0] tracking-tight">Boss.AI</span>
+          <div className="flex flex-col min-w-0">
+            <span className="text-base font-bold text-[#e8e8f0] tracking-tight leading-tight">Boss AI</span>
+            {storeName && (
+              <span className="text-[11px] text-[#888899] truncate leading-tight">{storeName}</span>
+            )}
+          </div>
         </div>
       </div>
 

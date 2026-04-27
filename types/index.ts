@@ -22,6 +22,22 @@ export interface Role {
   created_at: string
 }
 
+export type EmploymentType = 'full_time' | 'part_time' | 'seasonal' | 'temporary'
+
+export const EMPLOYMENT_TYPE_LABELS: Record<EmploymentType, string> = {
+  full_time: 'Full Time',
+  part_time: 'Part Time',
+  seasonal: 'Seasonal',
+  temporary: 'Temporary',
+}
+
+export const EMPLOYMENT_TYPE_COLORS: Record<EmploymentType, string> = {
+  full_time: '#22c55e',
+  part_time: '#3b82f6',
+  seasonal: '#f97316',
+  temporary: '#a855f7',
+}
+
 export interface Employee {
   id: string
   profile_id: string
@@ -29,6 +45,7 @@ export interface Employee {
   hourly_rate?: number
   max_hours_per_week?: number
   min_hours_per_week?: number
+  employment_type?: EmploymentType
   created_at: string
   profile?: Profile
   role?: Role
@@ -118,6 +135,39 @@ export interface AuditLog {
   old_values?: Record<string, unknown>
   new_values?: Record<string, unknown>
   created_at: string
+}
+
+export interface StoreSettings {
+  id: string
+  store_name: string
+  created_at: string
+  updated_at: string
+}
+
+export interface StoreHours {
+  id: string
+  day_of_week: number
+  is_open: boolean
+  open_time: string
+  close_time: string
+  updated_at: string
+}
+
+export interface AIConversationMessage {
+  id: string
+  user_id: string
+  role: 'user' | 'assistant'
+  content: string
+  created_at: string
+}
+
+export interface AIMemory {
+  id: string
+  user_id: string
+  kind: string
+  content: string
+  created_at: string
+  updated_at: string
 }
 
 export interface WeekDay {
