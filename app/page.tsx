@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
+import { Landing } from '@/components/landing/landing'
 
 export default async function Home() {
   const supabase = await createClient()
@@ -13,8 +14,8 @@ export default async function Home() {
       .single()
 
     if (profile?.role === 'manager') redirect('/schedule')
-    else redirect('/portal')
+    redirect('/portal')
   }
 
-  redirect('/login')
+  return <Landing />
 }
