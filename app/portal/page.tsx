@@ -11,8 +11,8 @@ export default async function PortalPage() {
   const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single()
   if (!profile) redirect('/login')
 
-  // If manager, redirect to schedule
-  if (profile.role === 'manager') redirect('/schedule')
+  // If manager, redirect to dashboard
+  if (profile.role === 'manager') redirect('/dashboard')
 
   const { data: employee } = await supabase
     .from('employees')

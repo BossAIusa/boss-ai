@@ -1,22 +1,29 @@
 'use client'
 import { useState } from 'react'
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { TimeOffRequest, AvailabilityChangeRequest } from '@/types'
-import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { getInitials, stringToColor, DAY_NAMES, formatTime } from '@/lib/utils'
 import { format, parseISO } from 'date-fns'
-import { CheckCircle, XCircle, Clock, Calendar, RefreshCw } from 'lucide-react'
+import { CheckCircle, XCircle, Clock, Calendar, RefreshCw, AlertCircle, ArrowRight } from 'lucide-react'
+
+interface CoverageShift {
+  id: string
+  employee_id: string
+  date: string
+}
 
 interface ApprovalsViewProps {
   timeOffRequests: TimeOffRequest[]
   availabilityRequests: AvailabilityChangeRequest[]
+  coverageShifts: CoverageShift[]
   managerId: string
 }
 
 type Tab = 'time-off' | 'availability'
 
-export function ApprovalsView({ timeOffRequests: initial_tor, availabilityRequests: initial_ar, managerId }: ApprovalsViewProps) {
+export function ApprovalsView({ timeOffRequests: initial_tor, availabilityRequests: initial_ar, coverageShifts, managerId }: ApprovalsViewProps) {
   const [tab, setTab] = useState<Tab>('time-off')
   const [timeOffRequests, setTimeOffRequests] = useState(initial_tor)
   const [availabilityRequests, setAvailabilityRequests] = useState(initial_ar)
@@ -82,6 +89,23 @@ export function ApprovalsView({ timeOffRequests: initial_tor, availabilityReques
     setAvailabilityRequests(prev => prev.map(r => r.id === id ? { ...r, status } : r))
   }
 
+  const getCoverage = (req: TimeOffRequest) => {
+    const empSet = new Set<string>()
+    for (const s of coverageShifts) {
+      if (s.date >= req.start_date && s.date <= req.end_date && s.employee_id !== req.employee_id) {
+        empSet.add(s.employee_id)
+      }
+    }
+    return empSet.size
+  }
+
+  const formatRange = (start: string, end: string) => {
+    const s = parseISO(start)
+    const e = parseISO(end)
+    if (start === end) return format(s, 'EEE MMM d')
+    return `${format(s, 'EEE MMM d')} – ${format(e, 'EEE MMM d')}`
+  }
+
   const statusBadge = (status: string) => {
     if (status === 'approved') return <Badge color="#22c55e">Approved</Badge>
     if (status === 'denied') return <Badge color="#f43f5e">Denied</Badge>
@@ -142,6 +166,8 @@ export function ApprovalsView({ timeOffRequests: initial_tor, availabilityReques
           {timeOffRequests.map(req => {
             const name = req.employee?.profile?.full_name || 'Unknown'
             const color = stringToColor(req.employee_id)
+            const isPending = req.status === 'pending'
+            const coverage = isPending ? getCoverage(req) : null
             return (
               <div key={req.id} className="bg-[#111118] border border-[#2a2a3a] rounded-xl p-4 flex items-start gap-4">
                 <div
@@ -150,20 +176,46 @@ export function ApprovalsView({ timeOffRequests: initial_tor, availabilityReques
                 >
                   {getInitials(name)}
                 </div>
-                <div className="flex-1">
+                <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
                     <span className="font-medium text-[#e8e8f0] text-sm">{name}</span>
                     {statusBadge(req.status)}
                   </div>
-                  <div className="text-xs text-[#888899]">
-                    {format(parseISO(req.start_date), 'MMM d')} – {format(parseISO(req.end_date), 'MMM d, yyyy')}
+                  <div className="flex items-center gap-2 flex-wrap text-xs text-[#888899]">
+                    <span>{formatRange(req.start_date, req.end_date)}</span>
+                    <Link
+                      href={`/schedule?date=${req.start_date}`}
+                      className="inline-flex items-center gap-0.5 text-indigo-400 hover:text-indigo-300 transition-colors"
+                    >
+                      View schedule <ArrowRight size={11} />
+                    </Link>
                   </div>
-                  {req.reason && <div className="text-xs text-[#888899] mt-1">"{req.reason}"</div>}
+                  {req.reason && <div className="text-xs text-[#888899] mt-1">&ldquo;{req.reason}&rdquo;</div>}
+                  {isPending && coverage !== null && (
+                    <div className="mt-2 flex items-center gap-2">
+                      <span className="text-[10px] uppercase tracking-wider text-[#888899]/70">Coverage impact</span>
+                      {coverage === 0 && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-red-500/10 border border-red-500/30 text-red-400">
+                          <AlertCircle size={11} /> Understaffed — no coverage
+                        </span>
+                      )}
+                      {coverage === 1 && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-500/10 border border-amber-500/30 text-amber-400">
+                          <AlertCircle size={11} /> Thin coverage — 1 employee
+                        </span>
+                      )}
+                      {coverage >= 2 && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-green-500/10 border border-green-500/30 text-green-400">
+                          <CheckCircle size={11} /> Covered
+                        </span>
+                      )}
+                    </div>
+                  )}
                   <div className="text-[10px] text-[#888899]/60 mt-1">
                     {format(parseISO(req.created_at), 'MMM d, yyyy h:mm a')}
                   </div>
                 </div>
-                {req.status === 'pending' && (
+                {isPending && (
                   <div className="flex gap-2">
                     <button
                       onClick={() => reviewTimeOff(req.id, 'denied')}

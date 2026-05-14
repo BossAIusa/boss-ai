@@ -6,9 +6,9 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Modal } from '@/components/ui/modal'
-import { DAY_NAMES, DAY_NAMES_SHORT, formatTime, formatDisplayDate } from '@/lib/utils'
-import { format, parseISO } from 'date-fns'
-import { Calendar, Clock, Coffee, Plus, CheckCircle, XCircle } from 'lucide-react'
+import { DAY_NAMES, formatTime } from '@/lib/utils'
+import { format, parseISO, isToday } from 'date-fns'
+import { Calendar, Clock, Coffee, Plus } from 'lucide-react'
 
 interface PortalViewProps {
   profile: Profile
@@ -94,7 +94,7 @@ export function PortalView({
   }
 
   return (
-    <div className="p-6">
+    <div className="p-4 sm:p-6">
       {/* Header */}
       <div className="mb-6">
         <h1 className="text-xl font-bold text-[#e8e8f0]">My Portal</h1>
@@ -102,7 +102,7 @@ export function PortalView({
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 bg-[#111118] border border-[#2a2a3a] rounded-lg p-1 w-fit mb-6">
+      <div className="flex gap-1 bg-[#111118] border border-[#2a2a3a] rounded-lg p-1 w-full sm:w-fit mb-6">
         {([
           { id: 'schedule', label: 'My Schedule', icon: Calendar },
           { id: 'availability', label: 'Availability', icon: Clock },
@@ -111,7 +111,7 @@ export function PortalView({
           <button
             key={id}
             onClick={() => setTab(id)}
-            className={`px-4 py-2 text-sm font-medium rounded-md transition-all flex items-center gap-2 ${
+            className={`flex-1 sm:flex-initial justify-center sm:justify-start px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium rounded-md transition-all flex items-center gap-1.5 sm:gap-2 ${
               tab === id ? 'bg-[#1a1a24] text-[#e8e8f0]' : 'text-[#888899] hover:text-[#e8e8f0]'
             }`}
           >
@@ -130,31 +130,43 @@ export function PortalView({
               <p className="text-sm">No upcoming shifts. Your manager hasn't published the schedule yet.</p>
             </div>
           )}
-          {shifts.map(shift => (
-            <div key={shift.id} className="bg-[#111118] border border-[#2a2a3a] rounded-xl p-4 flex items-center gap-4">
-              <div className="w-12 text-center">
-                <div className="text-xs text-[#888899] uppercase">{format(parseISO(shift.date), 'EEE')}</div>
-                <div className="text-xl font-bold text-[#e8e8f0]">{format(parseISO(shift.date), 'd')}</div>
-                <div className="text-xs text-[#888899]">{format(parseISO(shift.date), 'MMM')}</div>
-              </div>
-              <div className="w-px h-10 bg-[#2a2a3a]" />
-              <div className="flex-1">
-                <div className="font-medium text-[#e8e8f0] text-sm">
-                  {formatTime(shift.start_time)} – {formatTime(shift.end_time)}
+          {shifts.map(shift => {
+            const shiftDate = parseISO(shift.date)
+            const todayShift = isToday(shiftDate)
+            const start = shift.start_time.split(':').map(Number)
+            const end = shift.end_time.split(':').map(Number)
+            const hours = (end[0] * 60 + end[1] - start[0] * 60 - start[1]) / 60
+
+            return (
+              <div
+                key={shift.id}
+                className={`bg-[#111118] border border-[#2a2a3a] rounded-xl p-4 flex items-center gap-3 sm:gap-4 ${
+                  todayShift ? 'border-l-4 border-l-indigo-500' : ''
+                }`}
+              >
+                <div className="w-12 text-center flex-shrink-0">
+                  <div className={`text-[10px] sm:text-xs uppercase ${todayShift ? 'text-indigo-400' : 'text-[#888899]'}`}>
+                    {format(shiftDate, 'EEE')}
+                  </div>
+                  <div className={`text-xl font-bold ${todayShift ? 'text-indigo-300' : 'text-[#e8e8f0]'}`}>
+                    {format(shiftDate, 'd')}
+                  </div>
+                  <div className="text-[10px] sm:text-xs text-[#888899]">{format(shiftDate, 'MMM')}</div>
                 </div>
-                {shift.role && <Badge color={shift.role.color} className="mt-1">{shift.role.name}</Badge>}
-                {shift.notes && <div className="text-xs text-[#888899] mt-1">{shift.notes}</div>}
+                <div className="w-px h-10 bg-[#2a2a3a] flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-[#e8e8f0] text-sm">
+                    {formatTime(shift.start_time)} – {formatTime(shift.end_time)}
+                  </div>
+                  {shift.role && <Badge color={shift.role.color} className="mt-1">{shift.role.name}</Badge>}
+                  {shift.notes && <div className="text-xs text-[#888899] mt-1 truncate">{shift.notes}</div>}
+                </div>
+                <div className="text-sm text-[#888899] flex-shrink-0">
+                  {hours}h
+                </div>
               </div>
-              <div className="text-sm text-[#888899]">
-                {(() => {
-                  const start = shift.start_time.split(':').map(Number)
-                  const end = shift.end_time.split(':').map(Number)
-                  const hours = (end[0] * 60 + end[1] - start[0] * 60 - start[1]) / 60
-                  return `${hours}h`
-                })()}
-              </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
 
@@ -167,20 +179,27 @@ export function PortalView({
               const pendingReq = availabilityRequests.find(r => r.day_of_week === i && r.status === 'pending')
 
               return (
-                <div key={i} className="bg-[#111118] border border-[#2a2a3a] rounded-xl px-4 py-3 flex items-center gap-4">
-                  <div className="w-24 text-sm font-medium text-[#e8e8f0]">{DAY_NAMES[i]}</div>
-                  <div className="flex-1 text-sm text-[#888899]">
-                    {dayAvail?.is_available
-                      ? `${formatTime(dayAvail.start_time)} – ${formatTime(dayAvail.end_time)}`
-                      : 'Not available'}
+                <div
+                  key={i}
+                  className="bg-[#111118] border border-[#2a2a3a] rounded-xl px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4"
+                >
+                  <div className="flex items-center justify-between sm:contents">
+                    <div className="w-24 text-sm font-medium text-[#e8e8f0]">{DAY_NAMES[i]}</div>
+                    <div className="flex-1 text-sm text-[#888899] text-right sm:text-left">
+                      {dayAvail?.is_available
+                        ? `${formatTime(dayAvail.start_time)} – ${formatTime(dayAvail.end_time)}`
+                        : 'Not available'}
+                    </div>
                   </div>
-                  {pendingReq && <Badge color="#f97316">Change pending</Badge>}
-                  <button
-                    onClick={() => openAvrModal(i)}
-                    className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
-                  >
-                    Request change
-                  </button>
+                  <div className="flex items-center justify-between sm:contents gap-3">
+                    {pendingReq && <Badge color="#f97316">Change pending</Badge>}
+                    <button
+                      onClick={() => openAvrModal(i)}
+                      className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors whitespace-nowrap"
+                    >
+                      Request change
+                    </button>
+                  </div>
                 </div>
               )
             })}

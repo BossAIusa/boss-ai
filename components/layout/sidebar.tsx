@@ -1,6 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
+import { useEffect, useMemo, useState } from 'react'
 import { cn } from '@/lib/utils'
 import {
   Calendar, Users, Settings, LogOut, Bot, Bell, User, ChevronRight, LayoutDashboard
@@ -14,6 +15,7 @@ interface SidebarProps {
 }
 
 const managerNav = [
+  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/schedule', label: 'Schedule', icon: Calendar },
   { href: '/team', label: 'Team', icon: Users },
   { href: '/approvals', label: 'Approvals', icon: Bell },
@@ -28,8 +30,33 @@ const employeeNav = [
 export function Sidebar({ profile, storeName }: SidebarProps) {
   const pathname = usePathname()
   const router = useRouter()
-  const supabase = createClient()
+  const supabase = useMemo(() => createClient(), [])
   const nav = profile.role === 'manager' ? managerNav : employeeNav
+  const [pendingCount, setPendingCount] = useState(0)
+
+  useEffect(() => {
+    if (profile.role !== 'manager') return
+
+    const refresh = async () => {
+      const [timeOff, availability] = await Promise.all([
+        supabase.from('time_off_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
+        supabase.from('availability_change_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
+      ])
+      setPendingCount((timeOff.count ?? 0) + (availability.count ?? 0))
+    }
+
+    refresh()
+
+    const channel = supabase
+      .channel('sidebar-pending-approvals')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'time_off_requests' }, refresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'availability_change_requests' }, refresh)
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [profile.role, supabase])
 
   const handleSignOut = async () => {
     await supabase.auth.signOut()
@@ -70,6 +97,14 @@ export function Sidebar({ profile, storeName }: SidebarProps) {
             >
               <Icon size={16} />
               {label}
+              {label === 'Approvals' && profile.role === 'manager' && pendingCount > 0 && (
+                <span
+                  className="flex items-center justify-center rounded-full text-white font-semibold"
+                  style={{ width: 16, height: 16, fontSize: 10, backgroundColor: '#f43f5e' }}
+                >
+                  {pendingCount > 99 ? '99+' : pendingCount}
+                </span>
+              )}
               {active && <ChevronRight size={12} className="ml-auto opacity-60" />}
             </Link>
           )

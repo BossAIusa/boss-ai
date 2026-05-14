@@ -404,3 +404,33 @@ CREATE TRIGGER update_schedules_updated_at BEFORE UPDATE ON schedules
 
 CREATE TRIGGER update_availability_updated_at BEFORE UPDATE ON availability
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- Notifications table (in-app notifications, e.g. schedule_published)
+CREATE TABLE IF NOT EXISTS notifications (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  schedule_id UUID REFERENCES schedules(id) ON DELETE CASCADE,
+  type TEXT NOT NULL,
+  read BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS notifications_employee_idx ON notifications (employee_id, created_at DESC);
+
+ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Employees can view own notifications" ON notifications FOR SELECT USING (
+  EXISTS (SELECT 1 FROM employees WHERE employees.id = notifications.employee_id AND employees.profile_id = auth.uid())
+);
+
+CREATE POLICY "Employees can update own notifications" ON notifications FOR UPDATE USING (
+  EXISTS (SELECT 1 FROM employees WHERE employees.id = notifications.employee_id AND employees.profile_id = auth.uid())
+);
+
+CREATE POLICY "Managers can insert notifications" ON notifications FOR INSERT WITH CHECK (
+  EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'manager')
+);
+
+CREATE POLICY "Managers can view notifications" ON notifications FOR SELECT USING (
+  EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'manager')
+);

@@ -13,7 +13,7 @@ export default async function Home() {
       .eq('id', user.id)
       .single()
 
-    if (profile?.role === 'manager') redirect('/schedule')
+    if (profile?.role === 'manager') redirect('/dashboard')
     redirect('/portal')
   }
 
