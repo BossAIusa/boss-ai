@@ -1,4 +1,4 @@
-export type UserRole = 'manager' | 'employee'
+export type UserRole = 'admin_manager' | 'manager' | 'employee'
 
 export interface Profile {
   id: string
@@ -7,10 +7,17 @@ export interface Profile {
   role: UserRole
   phone?: string
   address?: string
+  address_street?: string
+  address_city?: string
+  address_state?: string
+  address_zip?: string
+  date_of_birth?: string
   emergency_contact_name?: string
   emergency_contact_phone?: string
   emergency_contact_relationship?: string
   avatar_url?: string
+  organization_id?: string | null
+  onboarding_complete?: boolean
   created_at: string
   updated_at: string
 }
@@ -101,14 +108,55 @@ export interface AvailabilityException {
 export interface TimeOffRequest {
   id: string
   employee_id: string
+  organization_id?: string | null
   start_date: string
   end_date: string
   reason?: string
+  manager_note?: string | null
   status: 'pending' | 'approved' | 'denied'
   reviewed_by?: string
   reviewed_at?: string
   created_at: string
   employee?: Employee & { profile: Profile }
+}
+
+export interface ShiftDropRequest {
+  id: string
+  shift_id: string
+  employee_id: string
+  organization_id?: string | null
+  reason?: string | null
+  status: 'pending' | 'approved' | 'denied'
+  manager_id?: string | null
+  created_at: string
+  resolved_at?: string | null
+  shift?: Shift
+  employee?: Employee & { profile: Profile }
+}
+
+export type ShiftTradeStatus =
+  | 'pending_recipient'
+  | 'pending_manager'
+  | 'approved'
+  | 'denied'
+
+export interface ShiftTradeRequest {
+  id: string
+  organization_id?: string | null
+  requester_id: string
+  requester_shift_id: string
+  recipient_id: string
+  recipient_shift_id: string
+  status: ShiftTradeStatus
+  recipient_response?: string | null
+  manager_id?: string | null
+  message?: string | null
+  created_at: string
+  updated_at: string
+  requester?: Employee & { profile: Profile }
+  recipient?: Employee & { profile: Profile }
+  requester_shift?: Shift
+  recipient_shift?: Shift
 }
 
 export interface AvailabilityChangeRequest {
@@ -185,3 +233,55 @@ export const EMPLOYEE_COLORS = [
 
 export const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 export const DAY_NAMES_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+export type WriteupSeverity = 'minor' | 'moderate' | 'serious'
+
+export const WRITEUP_SEVERITY_LABELS: Record<WriteupSeverity, string> = {
+  minor: 'Minor',
+  moderate: 'Moderate',
+  serious: 'Serious',
+}
+
+export const WRITEUP_SEVERITY_COLORS: Record<WriteupSeverity, string> = {
+  minor: '#f59e0b',
+  moderate: '#f97316',
+  serious: '#ef4444',
+}
+
+export interface EmployeeWriteup {
+  id: string
+  employee_id: string
+  manager_id?: string
+  title: string
+  description: string
+  severity: WriteupSeverity
+  incident_date: string
+  acknowledged: boolean
+  acknowledged_at?: string | null
+  created_at: string
+}
+
+export type PraiseCategory = 'performance' | 'teamwork' | 'customer_service' | 'attendance' | 'other'
+
+export const PRAISE_CATEGORY_LABELS: Record<PraiseCategory, string> = {
+  performance: 'Performance',
+  teamwork: 'Teamwork',
+  customer_service: 'Customer Service',
+  attendance: 'Attendance',
+  other: 'Other',
+}
+
+export const PRAISE_CATEGORY_COLOR = '#6366f1'
+
+export interface EmployeePraise {
+  id: string
+  employee_id: string
+  manager_id?: string
+  title: string
+  description: string
+  category: PraiseCategory
+  incident_date: string
+  acknowledged: boolean
+  acknowledged_at?: string | null
+  created_at: string
+}

@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import DashboardShell from '@/app/layout-dashboard'
 import { PortalView } from './portal-view'
+import { isManagerRole } from '@/lib/utils'
 
 export default async function PortalPage() {
   const supabase = await createClient()
@@ -12,7 +13,7 @@ export default async function PortalPage() {
   if (!profile) redirect('/login')
 
   // If manager, redirect to dashboard
-  if (profile.role === 'manager') redirect('/dashboard')
+  if (isManagerRole(profile.role)) redirect('/dashboard')
 
   const { data: employee } = await supabase
     .from('employees')
@@ -50,6 +51,18 @@ export default async function PortalPage() {
 
   const { data: roles } = await supabase.from('roles').select('*')
 
+  const { data: writeups } = await supabase
+    .from('employee_writeups')
+    .select('*')
+    .eq('employee_id', employee.id)
+    .order('incident_date', { ascending: false })
+
+  const { data: praise } = await supabase
+    .from('employee_praise')
+    .select('*')
+    .eq('employee_id', employee.id)
+    .order('incident_date', { ascending: false })
+
   return (
     <DashboardShell>
       <PortalView
@@ -60,6 +73,8 @@ export default async function PortalPage() {
         timeOffRequests={timeOffRequests || []}
         availabilityRequests={availabilityRequests || []}
         roles={roles || []}
+        writeups={writeups || []}
+        praise={praise || []}
       />
     </DashboardShell>
   )

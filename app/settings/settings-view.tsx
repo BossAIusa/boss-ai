@@ -1,13 +1,16 @@
 'use client'
 import { useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { Role, StoreSettings, StoreHours } from '@/types'
+import { Role, StoreSettings, StoreHours, Employee, Availability } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Modal } from '@/components/ui/modal'
 import { TimePicker } from '@/components/ui/time-picker'
 import { DAY_NAMES_SHORT } from '@/lib/utils'
 import { Plus, Pencil, Trash2, Briefcase, Store, Clock } from 'lucide-react'
+import { TeamView } from '@/app/team/team-view'
+import { cn } from '@/lib/utils'
 
 const PRESET_COLORS = [
   '#6366f1', '#8b5cf6', '#ec4899', '#f43f5e',
@@ -19,6 +22,9 @@ interface SettingsViewProps {
   roles: Role[]
   storeSettings: StoreSettings | null
   storeHours: StoreHours[]
+  employees: Employee[]
+  availability: Availability[]
+  meProfileId: string
 }
 
 type HoursDraft = {
@@ -29,7 +35,27 @@ type HoursDraft = {
   id?: string
 }
 
-export function SettingsView({ roles: initialRoles, storeSettings, storeHours: initialHours }: SettingsViewProps) {
+type Tab = 'general' | 'team'
+
+export function SettingsView({
+  roles: initialRoles,
+  storeSettings,
+  storeHours: initialHours,
+  employees,
+  availability,
+  meProfileId,
+}: SettingsViewProps) {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const tab: Tab = searchParams.get('tab') === 'team' ? 'team' : 'general'
+  const setTab = (next: Tab) => {
+    const params = new URLSearchParams(searchParams.toString())
+    if (next === 'team') params.set('tab', 'team')
+    else params.delete('tab')
+    const qs = params.toString()
+    router.replace(qs ? `/settings?${qs}` : '/settings', { scroll: false })
+  }
+
   const [roles, setRoles] = useState(initialRoles)
   const [modal, setModal] = useState(false)
   const [editing, setEditing] = useState<Role | null>(null)
@@ -134,132 +160,157 @@ export function SettingsView({ roles: initialRoles, storeSettings, storeHours: i
     setHours(prev => prev.map((h, i) => i === idx ? { ...h, ...patch } : h))
   }
 
+  const tabButtonCls = (active: boolean) =>
+    cn(
+      'px-3 py-2 -mb-px text-sm font-medium border-b-2 transition-colors',
+      active
+        ? 'text-[#818cf8] border-[#6366f1]'
+        : 'text-[#888899] border-transparent hover:text-[#e8e8f0]'
+    )
+
   return (
-    <div className="p-6 max-w-2xl">
-      <div className="mb-8">
+    <div>
+      {/* Header + Tabs */}
+      <div className="px-6 pt-6 border-b border-[#2a2a3a]">
         <h1 className="text-xl font-bold text-[#e8e8f0]">Settings</h1>
-        <p className="text-sm text-[#888899] mt-0.5">Manage your workspace configuration</p>
-      </div>
-
-      {/* Store Info */}
-      <div className="bg-[#111118] border border-[#2a2a3a] rounded-xl mb-6">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[#2a2a3a]">
-          <div className="flex items-center gap-2">
-            <Store size={15} className="text-[#888899]" />
-            <span className="font-semibold text-[#e8e8f0] text-sm">Store</span>
-          </div>
-          {storeSaved && <span className="text-xs text-green-400">Saved ✓</span>}
-        </div>
-        <div className="p-5 space-y-3">
-          <Input
-            label="Store Name"
-            placeholder="e.g. Main Street Coffee"
-            value={storeName}
-            onChange={e => setStoreName(e.target.value)}
-          />
-          <div className="flex justify-end">
-            <Button size="sm" onClick={saveStore} loading={savingStore}>Save</Button>
-          </div>
+        <p className="text-sm text-[#888899] mt-0.5 mb-4">Manage your workspace configuration</p>
+        <div className="flex gap-1">
+          <button type="button" onClick={() => setTab('general')} className={tabButtonCls(tab === 'general')}>
+            General
+          </button>
+          <button type="button" onClick={() => setTab('team')} className={tabButtonCls(tab === 'team')}>
+            Team
+          </button>
         </div>
       </div>
 
-      {/* Hours of Operation */}
-      <div className="bg-[#111118] border border-[#2a2a3a] rounded-xl mb-6">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[#2a2a3a]">
-          <div className="flex items-center gap-2">
-            <Clock size={15} className="text-[#888899]" />
-            <span className="font-semibold text-[#e8e8f0] text-sm">Hours of Operation</span>
+      {tab === 'general' && (
+        <div className="p-6 max-w-2xl">
+          {/* Store Info */}
+          <div className="bg-[#111118] border border-[#2a2a3a] rounded-xl mb-6">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-[#2a2a3a]">
+              <div className="flex items-center gap-2">
+                <Store size={15} className="text-[#888899]" />
+                <span className="font-semibold text-[#e8e8f0] text-sm">Store</span>
+              </div>
+              {storeSaved && <span className="text-xs text-green-400">Saved ✓</span>}
+            </div>
+            <div className="p-5 space-y-3">
+              <Input
+                label="Store Name"
+                placeholder="e.g. Main Street Coffee"
+                value={storeName}
+                onChange={e => setStoreName(e.target.value)}
+              />
+              <div className="flex justify-end">
+                <Button size="sm" onClick={saveStore} loading={savingStore}>Save</Button>
+              </div>
+            </div>
           </div>
-          {hoursSaved && <span className="text-xs text-green-400">Saved ✓</span>}
-        </div>
-        <div className="p-5 space-y-2.5">
-          {hours.map((h, idx) => (
-            <div key={h.day_of_week} className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={() => updateHours(idx, { is_open: !h.is_open })}
-                className={`w-12 h-6 rounded-full relative transition-colors flex-shrink-0 ${
-                  h.is_open ? 'bg-green-500' : 'bg-[#2a2a3a]'
-                }`}
-              >
-                <div className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${
-                  h.is_open ? 'translate-x-7' : 'translate-x-1'
-                }`} />
-              </button>
-              <span className="w-10 text-xs text-[#888899] font-medium flex-shrink-0">
-                {DAY_NAMES_SHORT[h.day_of_week]}
-              </span>
-              {h.is_open ? (
-                <div className="flex items-center gap-2 flex-1 min-w-0">
-                  <TimePicker
-                    value={h.open_time}
-                    onChange={v => updateHours(idx, { open_time: v })}
-                  />
-                  <span className="text-xs text-[#888899]">to</span>
-                  <TimePicker
-                    value={h.close_time}
-                    onChange={v => updateHours(idx, { close_time: v })}
-                  />
+
+          {/* Hours of Operation */}
+          <div className="bg-[#111118] border border-[#2a2a3a] rounded-xl mb-6">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-[#2a2a3a]">
+              <div className="flex items-center gap-2">
+                <Clock size={15} className="text-[#888899]" />
+                <span className="font-semibold text-[#e8e8f0] text-sm">Hours of Operation</span>
+              </div>
+              {hoursSaved && <span className="text-xs text-green-400">Saved ✓</span>}
+            </div>
+            <div className="p-5 space-y-2.5">
+              {hours.map((h, idx) => (
+                <div key={h.day_of_week} className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => updateHours(idx, { is_open: !h.is_open })}
+                    className={`w-12 h-6 rounded-full relative transition-colors flex-shrink-0 ${
+                      h.is_open ? 'bg-green-500' : 'bg-[#2a2a3a]'
+                    }`}
+                  >
+                    <div className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${
+                      h.is_open ? 'translate-x-7' : 'translate-x-1'
+                    }`} />
+                  </button>
+                  <span className="w-10 text-xs text-[#888899] font-medium flex-shrink-0">
+                    {DAY_NAMES_SHORT[h.day_of_week]}
+                  </span>
+                  {h.is_open ? (
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                      <TimePicker
+                        value={h.open_time}
+                        onChange={v => updateHours(idx, { open_time: v })}
+                      />
+                      <span className="text-xs text-[#888899]">to</span>
+                      <TimePicker
+                        value={h.close_time}
+                        onChange={v => updateHours(idx, { close_time: v })}
+                      />
+                    </div>
+                  ) : (
+                    <span className="text-xs text-[#888899]/50">Closed</span>
+                  )}
                 </div>
-              ) : (
-                <span className="text-xs text-[#888899]/50">Closed</span>
+              ))}
+              <div className="flex justify-end pt-2">
+                <Button size="sm" onClick={saveHours} loading={savingHours}>Save</Button>
+              </div>
+            </div>
+          </div>
+
+          {/* Roles Section */}
+          <div className="bg-[#111118] border border-[#2a2a3a] rounded-xl">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-[#2a2a3a]">
+              <div className="flex items-center gap-2">
+                <Briefcase size={15} className="text-[#888899]" />
+                <span className="font-semibold text-[#e8e8f0] text-sm">Job Roles</span>
+              </div>
+              <Button size="sm" onClick={openAdd}>
+                <Plus size={13} /> Add Role
+              </Button>
+            </div>
+
+            <div className="divide-y divide-[#2a2a3a]">
+              {roles.map(role => (
+                <div key={role.id} className="flex items-center gap-3 px-5 py-3">
+                  <div
+                    className="w-3 h-3 rounded-full flex-shrink-0"
+                    style={{ backgroundColor: role.color }}
+                  />
+                  <div
+                    className="px-2 py-0.5 rounded-md text-xs font-medium"
+                    style={{ backgroundColor: `${role.color}22`, color: role.color }}
+                  >
+                    {role.name}
+                  </div>
+                  <div className="flex-1" />
+                  <button
+                    onClick={() => openEdit(role)}
+                    className="p-1.5 rounded-md hover:bg-[#1a1a24] text-[#888899] hover:text-[#e8e8f0] transition-colors"
+                  >
+                    <Pencil size={13} />
+                  </button>
+                  <button
+                    onClick={() => remove(role)}
+                    className="p-1.5 rounded-md hover:bg-red-500/10 text-[#888899] hover:text-red-400 transition-colors"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              ))}
+
+              {roles.length === 0 && (
+                <div className="px-5 py-8 text-center text-[#888899] text-sm">
+                  No roles defined. Create your first role.
+                </div>
               )}
             </div>
-          ))}
-          <div className="flex justify-end pt-2">
-            <Button size="sm" onClick={saveHours} loading={savingHours}>Save</Button>
           </div>
         </div>
-      </div>
+      )}
 
-      {/* Roles Section */}
-      <div className="bg-[#111118] border border-[#2a2a3a] rounded-xl">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[#2a2a3a]">
-          <div className="flex items-center gap-2">
-            <Briefcase size={15} className="text-[#888899]" />
-            <span className="font-semibold text-[#e8e8f0] text-sm">Job Roles</span>
-          </div>
-          <Button size="sm" onClick={openAdd}>
-            <Plus size={13} /> Add Role
-          </Button>
-        </div>
-
-        <div className="divide-y divide-[#2a2a3a]">
-          {roles.map(role => (
-            <div key={role.id} className="flex items-center gap-3 px-5 py-3">
-              <div
-                className="w-3 h-3 rounded-full flex-shrink-0"
-                style={{ backgroundColor: role.color }}
-              />
-              <div
-                className="px-2 py-0.5 rounded-md text-xs font-medium"
-                style={{ backgroundColor: `${role.color}22`, color: role.color }}
-              >
-                {role.name}
-              </div>
-              <div className="flex-1" />
-              <button
-                onClick={() => openEdit(role)}
-                className="p-1.5 rounded-md hover:bg-[#1a1a24] text-[#888899] hover:text-[#e8e8f0] transition-colors"
-              >
-                <Pencil size={13} />
-              </button>
-              <button
-                onClick={() => remove(role)}
-                className="p-1.5 rounded-md hover:bg-red-500/10 text-[#888899] hover:text-red-400 transition-colors"
-              >
-                <Trash2 size={13} />
-              </button>
-            </div>
-          ))}
-
-          {roles.length === 0 && (
-            <div className="px-5 py-8 text-center text-[#888899] text-sm">
-              No roles defined. Create your first role.
-            </div>
-          )}
-        </div>
-      </div>
+      {tab === 'team' && (
+        <TeamView employees={employees} roles={roles} availability={availability} meProfileId={meProfileId} />
+      )}
 
       {/* Role Modal */}
       <Modal open={modal} onClose={() => setModal(false)} title={editing ? 'Edit Role' : 'Add Role'} size="sm">

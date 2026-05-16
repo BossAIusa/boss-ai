@@ -2,6 +2,7 @@ import { convertToModelMessages, streamText, stepCountIs, tool, UIMessage } from
 import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
 import { format, startOfWeek, addDays } from 'date-fns'
+import { isManagerRole } from '@/lib/utils'
 
 export const maxDuration = 60
 
@@ -32,7 +33,7 @@ async function handleChat(req: Request) {
   if (!user) return new Response('Unauthorized', { status: 401 })
 
   const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single()
-  if (!profile || profile.role !== 'manager') {
+  if (!profile || !isManagerRole(profile.role)) {
     return new Response('Forbidden', { status: 403 })
   }
 

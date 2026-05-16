@@ -6,6 +6,11 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
+/** True for both 'manager' and 'admin_manager'. Use server- and client-side. */
+export function isManagerRole(role: string | null | undefined): boolean {
+  return role === 'manager' || role === 'admin_manager'
+}
+
 export function getWeekDays(date: Date) {
   const start = startOfWeek(date, { weekStartsOn: 0 })
   return Array.from({ length: 7 }, (_, i) => addDays(start, i))

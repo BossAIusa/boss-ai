@@ -5,8 +5,9 @@ import DashboardShell from '@/app/layout-dashboard'
 import {
   Calendar, Users, Bot, Bell, Plus, ArrowRight, Clock, Sparkles, UserCheck
 } from 'lucide-react'
-import { format } from 'date-fns'
-import { formatDate, getWeekStart, getWeekEnd, getShiftDuration, getInitials, stringToColor } from '@/lib/utils'
+import { format, startOfMonth, endOfMonth, addDays } from 'date-fns'
+import { formatDate, getWeekStart, getWeekEnd, getShiftDuration, getInitials, stringToColor, isManagerRole } from '@/lib/utils'
+import { EmployeeDashboard } from './employee-dashboard'
 
 export default async function DashboardPage() {
   const supabase = await createClient()
@@ -15,7 +16,10 @@ export default async function DashboardPage() {
 
   const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single()
   if (!profile) redirect('/login')
-  if (profile.role !== 'manager') redirect('/portal')
+
+  if (!isManagerRole(profile.role)) {
+    return await renderEmployeeDashboard(supabase, profile)
+  }
 
   const today = new Date()
   const todayISO = formatDate(today)
@@ -265,6 +269,131 @@ export default async function DashboardPage() {
           </div>
         </div>
       </div>
+    </DashboardShell>
+  )
+}
+
+async function renderEmployeeDashboard(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  profile: { id: string; full_name: string; email: string; role: string }
+) {
+  const { data: employee } = await supabase
+    .from('employees')
+    .select('*, role:roles(*)')
+    .eq('profile_id', profile.id)
+    .maybeSingle()
+
+  if (!employee) {
+    // No employee record yet — likely mid-migration. Send to login rather than loop here.
+    redirect('/auth/login')
+  }
+
+  const today = new Date()
+  const todayISO = formatDate(today)
+  const weekStartDate = getWeekStart(today)
+  const weekEndDate = getWeekEnd(today)
+  const weekStart = formatDate(weekStartDate)
+  const weekEnd = formatDate(weekEndDate)
+  const monthStart = formatDate(startOfMonth(today))
+  const monthEnd = formatDate(endOfMonth(today))
+  const sixtyDaysOut = formatDate(addDays(today, 60))
+  const thirtyDaysOut = formatDate(addDays(today, 30))
+
+  const [
+    { data: shifts },
+    { data: ownNotifs },
+    { data: profileNotifs },
+    { data: timeOff },
+    { data: storeSettings },
+    { data: writeups },
+    { data: praise },
+    { data: tradeRequests },
+    { data: dropRequests },
+  ] = await Promise.all([
+    supabase
+      .from('shifts')
+      .select('*, schedule:schedules(id, published, week_start, week_end), role:roles(id, name, color)')
+      .eq('employee_id', employee.id)
+      .gte('date', monthStart)
+      .lte('date', sixtyDaysOut)
+      .order('date'),
+    supabase
+      .from('notifications')
+      .select('id, type, schedule_id, reference_id, shift_drop_request_id, shift_trade_request_id, created_at, schedule:schedules(week_start, week_end)')
+      .eq('employee_id', employee.id)
+      .eq('read', false)
+      .order('created_at', { ascending: false }),
+    supabase
+      .from('notifications')
+      .select('id, type, schedule_id, reference_id, shift_drop_request_id, shift_trade_request_id, created_at, schedule:schedules(week_start, week_end)')
+      .eq('profile_id', profile.id)
+      .eq('read', false)
+      .order('created_at', { ascending: false }),
+    supabase
+      .from('time_off_requests')
+      .select('id')
+      .eq('employee_id', employee.id)
+      .eq('status', 'approved')
+      .gte('start_date', todayISO)
+      .lte('start_date', thirtyDaysOut),
+    supabase.from('store_settings').select('store_name').maybeSingle(),
+    supabase.from('employee_writeups').select('id, manager_id').eq('employee_id', employee.id),
+    supabase.from('employee_praise').select('id, manager_id').eq('employee_id', employee.id),
+    supabase
+      .from('shift_trade_requests')
+      .select(`
+        id, status, requester_id, recipient_id, message,
+        requester_shift:shifts!shift_trade_requests_requester_shift_id_fkey(id, date, start_time, end_time, role:roles(name, color)),
+        recipient_shift:shifts!shift_trade_requests_recipient_shift_id_fkey(id, date, start_time, end_time, role:roles(name, color)),
+        requester:employees!shift_trade_requests_requester_id_fkey(id, profile:profiles(full_name)),
+        recipient:employees!shift_trade_requests_recipient_id_fkey(id, profile:profiles(full_name))
+      `)
+      .or(`requester_id.eq.${employee.id},recipient_id.eq.${employee.id}`),
+    supabase
+      .from('shift_drop_requests')
+      .select('id, status, shift:shifts(id, date, start_time, end_time, role:roles(name, color))')
+      .eq('employee_id', employee.id),
+  ])
+
+  const notifications = [...(ownNotifs || []), ...(profileNotifs || [])]
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+
+  // Resolve manager names for writeup/praise notifications
+  const managerIds = new Set<string>()
+  for (const w of writeups || []) if (w.manager_id) managerIds.add(w.manager_id)
+  for (const p of praise || []) if (p.manager_id) managerIds.add(p.manager_id)
+  let managersById: Record<string, string> = {}
+  if (managerIds.size > 0) {
+    const { data: mgrs } = await supabase
+      .from('profiles')
+      .select('id, full_name')
+      .in('id', Array.from(managerIds))
+    managersById = Object.fromEntries((mgrs || []).map(m => [m.id, m.full_name || 'a manager']))
+  }
+
+  // Month hours from published shifts in current month
+  const monthShifts = (shifts || []).filter(s => s.schedule?.published && s.date >= monthStart && s.date <= monthEnd)
+  const monthHours = monthShifts.reduce((sum, s) => sum + getShiftDuration(s.start_time, s.end_time), 0)
+
+  return (
+    <DashboardShell>
+      <EmployeeDashboard
+        profile={profile as never}
+        employee={employee as never}
+        weekStart={weekStart}
+        weekEnd={weekEnd}
+        todayISO={todayISO}
+        shifts={(shifts as never) || []}
+        notifications={(notifications as never) || []}
+        timeOffCount={timeOff?.length ?? 0}
+        storeName={storeSettings?.store_name || ''}
+        writeups={(writeups as never) || []}
+        praise={(praise as never) || []}
+        managersById={managersById}
+        monthHours={monthHours}
+        tradeRequests={(tradeRequests as never) || []}
+        dropRequests={(dropRequests as never) || []}
+      />
     </DashboardShell>
   )
 }

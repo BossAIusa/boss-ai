@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { Landing } from '@/components/landing/landing'
+import { isManagerRole } from '@/lib/utils'
 
 export default async function Home() {
   const supabase = await createClient()
@@ -13,7 +14,7 @@ export default async function Home() {
       .eq('id', user.id)
       .single()
 
-    if (profile?.role === 'manager') redirect('/dashboard')
+    if (isManagerRole(profile?.role)) redirect('/dashboard')
     redirect('/portal')
   }
 

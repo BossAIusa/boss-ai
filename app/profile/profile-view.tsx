@@ -87,8 +87,8 @@ export function ProfileView({ profile: initialProfile, employee }: ProfileViewPr
               <Mail size={13} /> {profile.email}
             </div>
             <div className="flex items-center gap-2 mt-1.5">
-              <Badge color={profile.role === 'manager' ? '#6366f1' : '#22c55e'}>
-                {profile.role === 'manager' ? 'Manager' : 'Employee'}
+              <Badge color={profile.role === 'admin_manager' ? '#8b5cf6' : profile.role === 'manager' ? '#6366f1' : '#22c55e'}>
+                {profile.role === 'admin_manager' ? 'Admin Manager' : profile.role === 'manager' ? 'Manager' : 'Employee'}
               </Badge>
               {employee?.role && (
                 <Badge color={employee.role.color}>{employee.role.name}</Badge>

@@ -9,18 +9,19 @@ import { Modal } from '@/components/ui/modal'
 import { Badge } from '@/components/ui/badge'
 import { TimePicker } from '@/components/ui/time-picker'
 import { getInitials, stringToColor, DAY_NAMES, DAY_NAMES_SHORT, formatTime } from '@/lib/utils'
-import { Plus, Pencil, Trash2, Phone, Mail, MapPin, User, AlertCircle, Clock } from 'lucide-react'
+import { Plus, Pencil, Trash2, Phone, Mail, MapPin, User, AlertCircle, Clock, Send, Copy, CheckCircle2, ShieldCheck } from 'lucide-react'
+import { useRoleGuard } from '@/hooks/use-role-guard'
 
 interface TeamViewProps {
   employees: Employee[]
   roles: Role[]
   availability: Availability[]
+  meProfileId: string
 }
 
 interface EmployeeForm {
   full_name: string
   email: string
-  password: string
   phone: string
   address: string
   role_id: string
@@ -34,7 +35,6 @@ interface EmployeeForm {
 const emptyForm: EmployeeForm = {
   full_name: '',
   email: '',
-  password: '',
   phone: '',
   address: '',
   role_id: '',
@@ -45,7 +45,7 @@ const emptyForm: EmployeeForm = {
   max_hours_per_week: '40',
 }
 
-export function TeamView({ employees: initialEmployees, roles, availability }: TeamViewProps) {
+export function TeamView({ employees: initialEmployees, roles, availability, meProfileId }: TeamViewProps) {
   const [employees, setEmployees] = useState(initialEmployees)
   const [modal, setModal] = useState(false)
   const [detailModal, setDetailModal] = useState(false)
@@ -56,7 +56,75 @@ export function TeamView({ employees: initialEmployees, roles, availability }: T
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [editAvailability, setEditAvailability] = useState<{ day_of_week: number; is_available: boolean; start_time: string; end_time: string }[]>([])
+  const [inviteResult, setInviteResult] = useState<{ name: string; acceptUrl: string; emailSent: boolean } | null>(null)
+  const [askInvite, setAskInvite] = useState<{ employeeId: string; email: string; name: string } | null>(null)
+  const [sendingInvite, setSendingInvite] = useState(false)
+  const [askInviteError, setAskInviteError] = useState('')
+  const [emailChangeResult, setEmailChangeResult] = useState<{ newEmail: string; emailSent: boolean; actionLink?: string; emailError?: string | null } | null>(null)
+  const [inviteManagerModal, setInviteManagerModal] = useState(false)
+  const [inviteManagerForm, setInviteManagerForm] = useState({ email: '', name: '' })
+  const [invitingManager, setInvitingManager] = useState(false)
   const supabase = createClient()
+  const { isAdminManager } = useRoleGuard()
+
+  const sendInvite = async (payload: { email: string; role: 'manager' | 'employee'; employee_id?: string; name?: string }) => {
+    const res = await fetch('/api/invite', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    const body = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      throw new Error(body.error || `Invite failed (${res.status})`)
+    }
+    return body as { accept_url: string; email_sent: boolean }
+  }
+
+  const confirmSendInvite = async () => {
+    if (!askInvite) return
+    setSendingInvite(true)
+    setAskInviteError('')
+    try {
+      const result = await sendInvite({
+        email: askInvite.email,
+        role: 'employee',
+        employee_id: askInvite.employeeId,
+        name: askInvite.name,
+      })
+      setAskInvite(null)
+      setInviteResult({
+        name: askInvite.name,
+        acceptUrl: result.accept_url,
+        emailSent: result.email_sent,
+      })
+    } catch (e) {
+      setAskInviteError(e instanceof Error ? e.message : 'Invite failed')
+    }
+    setSendingInvite(false)
+  }
+
+  const declineInvite = () => {
+    setAskInvite(null)
+    setAskInviteError('')
+  }
+
+  const submitManagerInvite = async () => {
+    setInvitingManager(true)
+    setError('')
+    try {
+      const result = await sendInvite({
+        email: inviteManagerForm.email,
+        role: 'manager',
+        name: inviteManagerForm.name || undefined,
+      })
+      setInviteManagerModal(false)
+      setInviteManagerForm({ email: '', name: '' })
+      setInviteResult({ name: inviteManagerForm.name || inviteManagerForm.email, acceptUrl: result.accept_url, emailSent: result.email_sent })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Invite failed')
+    }
+    setInvitingManager(false)
+  }
 
   const defaultAvailability = () =>
     Array.from({ length: 7 }, (_, i) => ({
@@ -79,7 +147,6 @@ export function TeamView({ employees: initialEmployees, roles, availability }: T
     setForm({
       full_name: emp.profile?.full_name || '',
       email: emp.profile?.email || '',
-      password: '',
       phone: emp.profile?.phone || '',
       address: emp.profile?.address || '',
       role_id: emp.role_id || '',
@@ -113,6 +180,32 @@ export function TeamView({ employees: initialEmployees, roles, availability }: T
 
     try {
       if (editing) {
+        const currentEmail = (editing.profile?.email || '').toLowerCase()
+        const nextEmail = form.email.trim().toLowerCase()
+        const emailChanged = !!editing.profile_id && nextEmail && nextEmail !== currentEmail
+
+        // Email changes go through the verification API, not a direct
+        // profiles.email update — Supabase only swaps the email once the
+        // employee clicks the verification link sent to the new address.
+        let emailChangePromise: Promise<{ newEmail: string; emailSent: boolean; actionLink?: string; emailError?: string | null } | null> | null = null
+        if (emailChanged) {
+          emailChangePromise = (async () => {
+            const res = await fetch('/api/email-change', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ profile_id: editing.profile_id, new_email: nextEmail }),
+            })
+            const body = await res.json().catch(() => ({}))
+            if (!res.ok) throw new Error(body.error || `Email change failed (${res.status})`)
+            return {
+              newEmail: nextEmail,
+              emailSent: !!body.email_sent,
+              actionLink: body.action_link as string | undefined,
+              emailError: body.email_error as string | null | undefined,
+            }
+          })()
+        }
+
         await supabase.from('profiles').update({
           full_name: form.full_name,
           phone: form.phone,
@@ -121,6 +214,8 @@ export function TeamView({ employees: initialEmployees, roles, availability }: T
           emergency_contact_phone: form.emergency_contact_phone,
           emergency_contact_relationship: form.emergency_contact_relationship,
         }).eq('id', editing.profile_id)
+
+        const emailChangeResult = emailChangePromise ? await emailChangePromise : null
 
         await supabase.from('employees').update({
           role_id: form.role_id || null,
@@ -156,43 +251,57 @@ export function TeamView({ employees: initialEmployees, roles, availability }: T
           .eq('id', editing.id)
           .single()
         if (data) setEmployees(prev => prev.map(e => e.id === editing.id ? data : e))
+
+        setModal(false)
+        if (emailChangeResult) {
+          setEmailChangeResult(emailChangeResult)
+        }
+        setSaving(false)
+        return
       } else {
-        const { data: signupData, error: signupError } = await supabase.auth.signUp({
-          email: form.email,
-          password: form.password || 'TempPass123!',
-          options: {
-            data: { full_name: form.full_name, role: 'employee' }
-          }
-        })
-
-        if (signupError) throw signupError
-
-        if (signupData.user) {
-          await supabase.from('profiles').update({
-            phone: form.phone,
-            address: form.address,
-            emergency_contact_name: form.emergency_contact_name,
-            emergency_contact_phone: form.emergency_contact_phone,
-            emergency_contact_relationship: form.emergency_contact_relationship,
-          }).eq('id', signupData.user.id)
-
-          await supabase.from('employees').update({
+        // Invite-only flow: pre-create an employee row (no profile_id yet) carrying
+        // the manager-set fields, then send an invitation. The invitee creates
+        // their account through /onboarding and the claim API links the rows.
+        const { data: newEmployee, error: empErr } = await supabase
+          .from('employees')
+          .insert({
             role_id: form.role_id || null,
             employment_type: form.employment_type,
             max_hours_per_week: parseInt(form.max_hours_per_week) || 40,
-          }).eq('profile_id', signupData.user.id)
+          })
+          .select('id')
+          .single()
 
-          const { data: empList } = await supabase
-            .from('employees')
-            .select('*, profile:profiles(*), role:roles(*)')
-            .order('created_at')
-          setEmployees(empList || [])
-        }
+        if (empErr || !newEmployee) throw empErr || new Error('Could not create employee record')
+
+        // Refresh local employee list so the new (profile-less) row shows up.
+        const { data: empList } = await supabase
+          .from('employees')
+          .select('*, profile:profiles(*), role:roles(*)')
+          .order('created_at')
+        setEmployees(empList || [])
+
+        // Close the form and ask whether to send an invite email as a deliberate
+        // second step.
+        setModal(false)
+        setAskInvite({
+          employeeId: newEmployee.id,
+          email: form.email,
+          name: form.full_name || form.email,
+        })
+        setAskInviteError('')
+        setSaving(false)
+        return
       }
 
       setModal(false)
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'An error occurred')
+      const msg = e instanceof Error
+        ? e.message
+        : typeof e === 'object' && e !== null && 'message' in e
+          ? String((e as { message: unknown }).message)
+          : 'An error occurred'
+      setError(msg)
     }
     setSaving(false)
   }
@@ -224,6 +333,11 @@ export function TeamView({ employees: initialEmployees, roles, availability }: T
           <Button variant="secondary" size="sm" onClick={() => setAvailModal(true)}>
             <Clock size={13} /> Availability
           </Button>
+          {isAdminManager && (
+            <Button variant="secondary" size="sm" onClick={() => setInviteManagerModal(true)}>
+              <ShieldCheck size={13} /> Invite Manager
+            </Button>
+          )}
           <Button size="sm" onClick={openAdd}>
             <Plus size={13} /> Add Employee
           </Button>
@@ -235,6 +349,10 @@ export function TeamView({ employees: initialEmployees, roles, availability }: T
           const name = emp.profile?.full_name || 'Unknown'
           const color = stringToColor(emp.id)
           const empType = (emp.employment_type as EmploymentType) || 'full_time'
+          const isMe = !!emp.profile_id && emp.profile_id === meProfileId
+          const profileRole = emp.profile?.role
+          const isAdminMgr = profileRole === 'admin_manager'
+          const isMgr = profileRole === 'manager' || isAdminMgr
           return (
             <div
               key={emp.id}
@@ -248,9 +366,21 @@ export function TeamView({ employees: initialEmployees, roles, availability }: T
                   {getInitials(name)}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="font-semibold text-[#e8e8f0] truncate">{name}</div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-semibold text-[#e8e8f0] truncate">{name}</span>
+                    {isMe && (
+                      <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">
+                        You
+                      </span>
+                    )}
+                  </div>
                   <div className="text-xs text-[#888899] truncate">{emp.profile?.email}</div>
                   <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                    {isAdminMgr ? (
+                      <Badge color="#6366f1">Admin Manager</Badge>
+                    ) : isMgr ? (
+                      <Badge color="#6366f1">Manager</Badge>
+                    ) : null}
                     {emp.role && <Badge color={emp.role.color}>{emp.role.name}</Badge>}
                     <Badge color={EMPLOYMENT_TYPE_COLORS[empType]}>
                       {EMPLOYMENT_TYPE_LABELS[empType]}
@@ -272,7 +402,9 @@ export function TeamView({ employees: initialEmployees, roles, availability }: T
                   </button>
                   <button
                     onClick={() => remove(emp)}
-                    className="p-1.5 rounded-md hover:bg-red-500/10 text-[#888899] hover:text-red-400 transition-colors"
+                    disabled={isMe}
+                    title={isMe ? "You can't remove yourself" : 'Remove'}
+                    className="p-1.5 rounded-md hover:bg-red-500/10 text-[#888899] hover:text-red-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-[#888899]"
                   >
                     <Trash2 size={13} />
                   </button>
@@ -315,16 +447,22 @@ export function TeamView({ employees: initialEmployees, roles, availability }: T
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <Input label="Full Name" placeholder="Jane Smith" {...f('full_name')} />
-            {!editing && <Input label="Email" type="email" placeholder="jane@example.com" {...f('email')} />}
+            <Input label="Email" type="email" placeholder="jane@example.com" {...f('email')} />
           </div>
-
+          {editing && editing.profile_id && (
+            <p className="text-[11px] text-[#888899] -mt-2">
+              Changing the email sends a verification link to the new address. The change only takes effect after the employee clicks the link.
+            </p>
+          )}
+          {editing && !editing.profile_id && form.email !== (editing.profile?.email || '') && (
+            <p className="text-[11px] text-amber-300/80 -mt-2">
+              This employee hasn&apos;t accepted their invite yet, so the email can&apos;t be changed here. Resend the invite to a new address instead.
+            </p>
+          )}
           {!editing && (
-            <Input
-              label="Temporary Password"
-              type="password"
-              placeholder="Min 6 characters"
-              {...f('password')}
-            />
+            <p className="text-[11px] text-[#888899] -mt-2">
+              They&apos;ll receive an invite email with a link to set their own password and finish onboarding.
+            </p>
           )}
 
           <div className="grid grid-cols-2 gap-3">
@@ -569,6 +707,164 @@ export function TeamView({ employees: initialEmployees, roles, availability }: T
             </tbody>
           </table>
         </div>
+      </Modal>
+
+      {/* Invite Manager modal (admin_manager only) */}
+      <Modal
+        open={inviteManagerModal}
+        onClose={() => { setInviteManagerModal(false); setInviteManagerForm({ email: '', name: '' }); setError('') }}
+        title="Invite Manager"
+        size="sm"
+      >
+        <div className="space-y-4">
+          <p className="text-xs text-[#888899]">Managers can build schedules, run the AI assistant, and manage employees.</p>
+          <Input
+            label="Email"
+            type="email"
+            placeholder="manager@example.com"
+            value={inviteManagerForm.email}
+            onChange={e => setInviteManagerForm(f => ({ ...f, email: e.target.value }))}
+          />
+          <Input
+            label="Name (optional)"
+            placeholder="Casey Jordan"
+            value={inviteManagerForm.name}
+            onChange={e => setInviteManagerForm(f => ({ ...f, name: e.target.value }))}
+          />
+          {error && (
+            <div className="px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">{error}</div>
+          )}
+          <div className="flex gap-2 justify-end">
+            <Button variant="secondary" size="sm" onClick={() => setInviteManagerModal(false)}>Cancel</Button>
+            <Button size="sm" loading={invitingManager} disabled={!inviteManagerForm.email} onClick={submitManagerInvite}>
+              <Send size={13} /> Send Invite
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Ask whether to send invite (deliberate step after creating employee) */}
+      <Modal
+        open={!!askInvite}
+        onClose={declineInvite}
+        title="Send invite email?"
+        size="sm"
+      >
+        {askInvite && (
+          <div className="space-y-4">
+            <p className="text-sm text-[#888899]">
+              <span className="text-[#e8e8f0]">{askInvite.name}</span> has been added. Send them an email invite so they can create their account and finish onboarding?
+            </p>
+            <p className="text-xs text-[#888899] break-all">{askInvite.email}</p>
+            {askInviteError && (
+              <div className="px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">{askInviteError}</div>
+            )}
+            <div className="flex gap-2 justify-end">
+              <Button variant="secondary" size="sm" onClick={declineInvite} disabled={sendingInvite}>
+                No, skip
+              </Button>
+              <Button size="sm" loading={sendingInvite} onClick={confirmSendInvite}>
+                <Send size={13} /> Yes, send invite
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Email change result modal */}
+      <Modal
+        open={!!emailChangeResult}
+        onClose={() => setEmailChangeResult(null)}
+        title="Verification email sent"
+        size="sm"
+      >
+        {emailChangeResult && (
+          <div className="space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-full bg-green-500/10 border border-green-500/30 flex items-center justify-center flex-shrink-0">
+                <Mail size={16} className="text-green-400" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-[#e8e8f0]">
+                  {emailChangeResult.emailSent
+                    ? `Verification link sent to ${emailChangeResult.newEmail}`
+                    : `Email pending verification`}
+                </p>
+                <p className="text-xs text-[#888899] mt-0.5">
+                  {emailChangeResult.emailSent
+                    ? "The change takes effect once they click the link. Until then, they keep signing in with their old email."
+                    : (emailChangeResult.emailError || "Couldn't send the verification email automatically. Share the link below with the employee.")}
+                </p>
+              </div>
+            </div>
+            {emailChangeResult.actionLink && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#1a1a24] border border-[#2a2a3a]">
+                <input
+                  readOnly
+                  value={emailChangeResult.actionLink}
+                  className="flex-1 bg-transparent text-xs text-[#888899] outline-none"
+                  onFocus={e => e.currentTarget.select()}
+                />
+                <button
+                  onClick={() => navigator.clipboard.writeText(emailChangeResult.actionLink!)}
+                  className="p-1 rounded-md hover:bg-[#22222f] text-[#888899] hover:text-[#e8e8f0] transition-colors"
+                  aria-label="Copy verification link"
+                  title="Copy"
+                >
+                  <Copy size={13} />
+                </button>
+              </div>
+            )}
+            <div className="flex justify-end">
+              <Button size="sm" onClick={() => setEmailChangeResult(null)}>Done</Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Invite Result modal */}
+      <Modal
+        open={!!inviteResult}
+        onClose={() => setInviteResult(null)}
+        title="Invitation sent"
+        size="sm"
+      >
+        {inviteResult && (
+          <div className="space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-full bg-green-500/10 border border-green-500/30 flex items-center justify-center flex-shrink-0">
+                <CheckCircle2 size={16} className="text-green-400" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-[#e8e8f0]">Invitation created for {inviteResult.name}</p>
+                <p className="text-xs text-[#888899] mt-0.5">
+                  {inviteResult.emailSent
+                    ? 'An invite email has been sent. It expires in 7 days.'
+                    : 'Email wasn\'t sent (Resend isn\'t configured). Copy the link below and share it manually.'}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#1a1a24] border border-[#2a2a3a]">
+              <input
+                readOnly
+                value={inviteResult.acceptUrl}
+                className="flex-1 bg-transparent text-xs text-[#888899] outline-none"
+                onFocus={e => e.currentTarget.select()}
+              />
+              <button
+                onClick={() => navigator.clipboard.writeText(inviteResult.acceptUrl)}
+                className="p-1 rounded-md hover:bg-[#22222f] text-[#888899] hover:text-[#e8e8f0] transition-colors"
+                aria-label="Copy invite URL"
+                title="Copy"
+              >
+                <Copy size={13} />
+              </button>
+            </div>
+            <div className="flex justify-end">
+              <Button size="sm" onClick={() => setInviteResult(null)}>Done</Button>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   )

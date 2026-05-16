@@ -121,7 +121,7 @@ export function ScheduleView({ profile, roles, employees }: ScheduleViewProps) {
   const didDrag = useRef(false)
 
   const supabase = createClient()
-  const isManager = profile.role === 'manager'
+  const isManager = profile.role === 'manager' || profile.role === 'admin_manager'
 
   useEffect(() => {
     setWeekDays(getWeekDays(currentDate))

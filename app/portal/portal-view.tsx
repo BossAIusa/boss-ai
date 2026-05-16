@@ -1,14 +1,19 @@
 'use client'
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { Profile, Employee, Shift, Availability, TimeOffRequest, AvailabilityChangeRequest, Role } from '@/types'
+import {
+  Profile, Employee, Shift, Availability, TimeOffRequest, AvailabilityChangeRequest, Role,
+  EmployeeWriteup, EmployeePraise,
+  WRITEUP_SEVERITY_LABELS, WRITEUP_SEVERITY_COLORS,
+  PRAISE_CATEGORY_LABELS, PRAISE_CATEGORY_COLOR,
+} from '@/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Modal } from '@/components/ui/modal'
 import { DAY_NAMES, formatTime } from '@/lib/utils'
 import { format, parseISO, isToday } from 'date-fns'
-import { Calendar, Clock, Coffee, Plus } from 'lucide-react'
+import { Calendar, Clock, Coffee, Plus, Award, ClipboardList, Star, CheckCircle2 } from 'lucide-react'
 
 interface PortalViewProps {
   profile: Profile
@@ -18,21 +23,47 @@ interface PortalViewProps {
   timeOffRequests: TimeOffRequest[]
   availabilityRequests: AvailabilityChangeRequest[]
   roles: Role[]
+  writeups: EmployeeWriteup[]
+  praise: EmployeePraise[]
 }
 
-type Tab = 'schedule' | 'availability' | 'time-off'
+type Tab = 'schedule' | 'availability' | 'time-off' | 'performance'
 
 export function PortalView({
   profile, employee, shifts: initialShifts,
   availability: initialAvailability,
   timeOffRequests: initialTOR,
   availabilityRequests: initialAVR,
+  writeups: initialWriteups,
+  praise: initialPraise,
 }: PortalViewProps) {
   const [tab, setTab] = useState<Tab>('schedule')
   const [shifts] = useState(initialShifts)
   const [availability, setAvailability] = useState(initialAvailability)
   const [timeOffRequests, setTimeOffRequests] = useState(initialTOR)
   const [availabilityRequests, setAvailabilityRequests] = useState(initialAVR)
+  const [writeups, setWriteups] = useState(initialWriteups)
+  const [praise, setPraise] = useState(initialPraise)
+
+  const supabase = createClient()
+
+  const acknowledgeWriteup = async (id: string) => {
+    const now = new Date().toISOString()
+    setWriteups(prev => prev.map(w => w.id === id ? { ...w, acknowledged: true, acknowledged_at: now } : w))
+    await supabase
+      .from('employee_writeups')
+      .update({ acknowledged: true, acknowledged_at: now })
+      .eq('id', id)
+  }
+
+  const acknowledgePraise = async (id: string) => {
+    const now = new Date().toISOString()
+    setPraise(prev => prev.map(p => p.id === id ? { ...p, acknowledged: true, acknowledged_at: now } : p))
+    await supabase
+      .from('employee_praise')
+      .update({ acknowledged: true, acknowledged_at: now })
+      .eq('id', id)
+  }
 
   // Time off modal
   const [torModal, setTorModal] = useState(false)
@@ -44,8 +75,6 @@ export function PortalView({
   const [avrDay, setAvrDay] = useState(0)
   const [avrForm, setAvrForm] = useState({ new_start_time: '09:00', new_end_time: '17:00', new_is_available: true, reason: '' })
   const [avrSaving, setAvrSaving] = useState(false)
-
-  const supabase = createClient()
 
   const submitTimeOff = async () => {
     setTorSaving(true)
@@ -107,6 +136,7 @@ export function PortalView({
           { id: 'schedule', label: 'My Schedule', icon: Calendar },
           { id: 'availability', label: 'Availability', icon: Clock },
           { id: 'time-off', label: 'Time Off', icon: Coffee },
+          { id: 'performance', label: 'Performance', icon: Award },
         ] as const).map(({ id, label, icon: Icon }) => (
           <button
             key={id}
@@ -259,6 +289,101 @@ export function PortalView({
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Performance Tab */}
+      {tab === 'performance' && (
+        <div className="space-y-8">
+          <section>
+            <div className="flex items-center gap-2 mb-3">
+              <ClipboardList size={14} className="text-[#888899]" />
+              <h3 className="text-sm font-semibold text-[#e8e8f0]">Write-ups</h3>
+              <span className="text-xs text-[#888899]">{writeups.length}</span>
+            </div>
+            {writeups.length === 0 ? (
+              <div className="text-center py-10 bg-[#111118] border border-[#2a2a3a] rounded-xl">
+                <ClipboardList size={28} className="mx-auto mb-2 text-[#888899]/50" />
+                <p className="text-sm text-[#e8e8f0]">No write-ups on record</p>
+                <p className="text-xs text-[#888899] mt-0.5">You&apos;re all clear.</p>
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {writeups.map(w => (
+                  <div key={w.id} className="bg-[#111118] border border-[#2a2a3a] rounded-xl p-4">
+                    <div className="flex flex-wrap items-center gap-2 mb-1">
+                      <Badge color={WRITEUP_SEVERITY_COLORS[w.severity]}>
+                        {WRITEUP_SEVERITY_LABELS[w.severity]}
+                      </Badge>
+                      <span className="text-[11px] text-[#888899]">
+                        {format(parseISO(w.incident_date), 'MMM d, yyyy')}
+                      </span>
+                    </div>
+                    <div className="text-sm font-semibold text-[#e8e8f0]">{w.title}</div>
+                    {w.description && (
+                      <p className="text-xs text-[#888899] mt-1 whitespace-pre-wrap">{w.description}</p>
+                    )}
+                    <div className="mt-3">
+                      {w.acknowledged ? (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-green-500/15 text-green-400 border border-green-500/25">
+                          <CheckCircle2 size={11} /> Acknowledged
+                        </span>
+                      ) : (
+                        <Button size="sm" variant="secondary" onClick={() => acknowledgeWriteup(w.id)}>
+                          Acknowledge
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section>
+            <div className="flex items-center gap-2 mb-3">
+              <Star size={14} className="text-[#888899]" />
+              <h3 className="text-sm font-semibold text-[#e8e8f0]">Praise received</h3>
+              <span className="text-xs text-[#888899]">{praise.length}</span>
+            </div>
+            {praise.length === 0 ? (
+              <div className="text-center py-10 bg-[#111118] border border-[#2a2a3a] rounded-xl">
+                <Star size={28} className="mx-auto mb-2 text-[#888899]/50" />
+                <p className="text-sm text-[#e8e8f0]">No praise on record yet</p>
+                <p className="text-xs text-[#888899] mt-0.5">Keep crushing it.</p>
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {praise.map(p => (
+                  <div key={p.id} className="bg-[#111118] border border-[#2a2a3a] rounded-xl p-4">
+                    <div className="flex flex-wrap items-center gap-2 mb-1">
+                      <Badge color={PRAISE_CATEGORY_COLOR}>
+                        {PRAISE_CATEGORY_LABELS[p.category]}
+                      </Badge>
+                      <span className="text-[11px] text-[#888899]">
+                        {format(parseISO(p.incident_date), 'MMM d, yyyy')}
+                      </span>
+                    </div>
+                    <div className="text-sm font-semibold text-[#e8e8f0]">{p.title}</div>
+                    {p.description && (
+                      <p className="text-xs text-[#888899] mt-1 whitespace-pre-wrap">{p.description}</p>
+                    )}
+                    <div className="mt-3">
+                      {p.acknowledged ? (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-green-500/15 text-green-400 border border-green-500/25">
+                          <CheckCircle2 size={11} /> Acknowledged
+                        </span>
+                      ) : (
+                        <Button size="sm" variant="secondary" onClick={() => acknowledgePraise(p.id)}>
+                          Acknowledge
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
         </div>
       )}
 

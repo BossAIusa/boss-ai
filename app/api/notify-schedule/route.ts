@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { isManagerRole } from '@/lib/utils'
 
 export async function POST(req: Request) {
   const supabase = await createClient()
@@ -17,7 +18,7 @@ export async function POST(req: Request) {
     .select('role')
     .eq('id', user.id)
     .single()
-  if (profile?.role !== 'manager') {
+  if (!isManagerRole(profile?.role)) {
     return NextResponse.json({ error: 'forbidden' }, { status: 403 })
   }
 

@@ -1,34 +1,34 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import DashboardShell from '@/app/layout-dashboard'
-import { AIAssistantView } from './ai-assistant-view'
+import { EmployeePerformanceView } from './employee-performance-view'
 import { isManagerRole } from '@/lib/utils'
 
-export default async function AIAssistantPage() {
+export default async function EmployeePerformancePage() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
   const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single()
-  if (!profile || !isManagerRole(profile.role)) redirect('/portal')
+  if (!profile) redirect('/login')
+  if (!isManagerRole(profile.role)) redirect('/portal')
 
   const [
     { data: employees },
-    { data: history },
-    { data: memories },
+    { data: writeups },
+    { data: praise },
   ] = await Promise.all([
     supabase.from('employees').select('*, profile:profiles(*), role:roles(*)').order('created_at'),
-    supabase.from('ai_conversations').select('*').eq('user_id', user.id).order('created_at', { ascending: true }).limit(200),
-    supabase.from('ai_memories').select('*').eq('user_id', user.id).order('updated_at', { ascending: false }),
+    supabase.from('employee_writeups').select('*').order('incident_date', { ascending: false }),
+    supabase.from('employee_praise').select('*').order('incident_date', { ascending: false }),
   ])
 
   return (
     <DashboardShell>
-      <AIAssistantView
-        userId={user.id}
+      <EmployeePerformanceView
         employees={employees || []}
-        history={history || []}
-        memories={memories || []}
+        writeups={writeups || []}
+        praise={praise || []}
       />
     </DashboardShell>
   )
